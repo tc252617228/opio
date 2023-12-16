@@ -1,4 +1,4 @@
-module opio
+module github.com/tc252617228/opio
 
 go 1.18
 
