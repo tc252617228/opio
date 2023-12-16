@@ -3,11 +3,12 @@ package opio
 import (
 	"fmt"
 	"log"
-	opio "opio/driver"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	opio "github.com/tc252617228/opio/driver"
 )
 
 var host = "127.0.0.1"
