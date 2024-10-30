@@ -7,8 +7,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	opio "github.com/tc252617228/opio/driver"
 )
 
 var host = "127.0.0.1"
@@ -23,7 +21,7 @@ var count = 1000
 
 // 生成唯一标识符
 func Test_MakeUUID(t *testing.T) {
-	v := opio.MakeUUID("W3.test.test")
+	v := MakeUUID("W3.test.test")
 	if v != 6236676836603809660 {
 		t.Errorf("Test MakeUUID error ")
 	}
@@ -37,7 +35,7 @@ func Test_MakeUUID(t *testing.T) {
 // 开启订阅
 func Test_sub(t *testing.T) {
 	// 用于初始化与服务的连接。需要提供服务器地址、端口、超时时间、用户名和密码。
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
@@ -62,7 +60,7 @@ func Test_sub(t *testing.T) {
 	//ids2[0] = 9031
 	log.Println("开始发起订阅")
 	// 初始化订阅，设置需要订阅的数据和回调函数以处理接收到的数据。
-	_ = sub.InitSubscribe(ids, "ID", func(res *opio.Response) {
+	_ = sub.InitSubscribe(ids, "ID", func(res *Response) {
 		errno := res.GetErrNo()
 		if errno == 0 {
 			format(res.GetDataSet())
@@ -87,17 +85,17 @@ func Test_sub(t *testing.T) {
 // 基础sql查询
 func Test_SQL(t *testing.T) {
 	// 用于初始化与服务的连接。需要提供服务器地址、端口、超时时间、用户名和密码。
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
 	}
-	_ = op.SetCompressModel(opio.ZIP_MODEL_Frame)
+	_ = op.SetCompressModel(ZIP_MODEL_Frame)
 	sql := "select * from Realtime limit 10"
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionExecSQL)
+	req.SetAction(ActionExecSQL)
 	req.SetSQL(sql)
 	_ = req.WriteAndFlush()
 
@@ -113,17 +111,17 @@ func Test_SQL(t *testing.T) {
 
 // 复杂情况下的sql查询
 func Test_SQL2(t *testing.T) {
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
 	}
-	_ = op.SetCompressModel(opio.ZIP_MODEL_Frame)
+	_ = op.SetCompressModel(ZIP_MODEL_Frame)
 	sql := "SELECT GN FROM NODE;"
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionExecSQL)
+	req.SetAction(ActionExecSQL)
 	req.SetSQL(sql)
 	_ = req.WriteAndFlush()
 
@@ -134,12 +132,12 @@ func Test_SQL2(t *testing.T) {
 	rs := res.GetDataSet()
 	format(rs)
 	rs.Close()
-	_ = op.SetCompressModel(opio.ZIP_MODEL_Frame)
+	_ = op.SetCompressModel(ZIP_MODEL_Frame)
 	sql = "SELECT GN FROM NODE WHERE GN='HNJT.NET';"
 	req = op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionExecSQL)
+	req.SetAction(ActionExecSQL)
 	req.SetSQL(sql)
 	_ = req.WriteAndFlush()
 
@@ -155,7 +153,7 @@ func Test_SQL2(t *testing.T) {
 
 // 自定义字段(GN)进行插入
 func Test_Insert_Realtime(t *testing.T) {
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -164,11 +162,11 @@ func Test_Insert_Realtime(t *testing.T) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionInsert)
+	req.SetAction(ActionInsert)
 
-	table := opio.NewTable("Realtime", 0)
-	table.AddColumn("GN", opio.VtString, 0)
-	table.AddColumn("AV", opio.VtObject, 0)
+	table := NewTable("Realtime", 0)
+	table.AddColumn("GN", VtString, 0)
+	table.AddColumn("AV", VtObject, 0)
 	w_count := 5
 	for {
 		table.Clear()
@@ -315,7 +313,7 @@ func Test_Insert_Realtime(t *testing.T) {
 
 // 根据ID进行实时数据写入
 func Test_Insert_Realtime_ID(t *testing.T) {
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -324,7 +322,7 @@ func Test_Insert_Realtime_ID(t *testing.T) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionExecSQL)
+	req.SetAction(ActionExecSQL)
 	sql := "select ID,RT from Point where  RT IN (0,1,2,3,4,5)"
 	req.SetSQL(sql)
 	_ = req.Write()
@@ -350,10 +348,10 @@ func Test_Insert_Realtime_ID(t *testing.T) {
 	req = op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionInsert)
-	table := opio.NewTable("Realtime", 0)
-	table.AddColumn("ID", opio.VtInt32, 0)
-	table.AddColumn("AV", opio.VtObject, 0)
+	req.SetAction(ActionInsert)
+	table := NewTable("Realtime", 0)
+	table.AddColumn("ID", VtInt32, 0)
+	table.AddColumn("AV", VtObject, 0)
 	w_count := 0
 	for {
 		table.Clear()
@@ -419,7 +417,7 @@ func Test_Insert_Realtime_ID(t *testing.T) {
 
 // 根据ID进行实时数据写入，并且专注于双精度浮点型实时数据写入
 func Test_Insert_Realtime_ID_DOUBLE(t *testing.T) {
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -428,7 +426,7 @@ func Test_Insert_Realtime_ID_DOUBLE(t *testing.T) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionExecSQL)
+	req.SetAction(ActionExecSQL)
 	sql := "select ID,RT from Point where  RT IN (0,1,2,3,4,5)"
 	req.SetSQL(sql)
 	_ = req.Write()
@@ -454,11 +452,11 @@ func Test_Insert_Realtime_ID_DOUBLE(t *testing.T) {
 	req = op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionInsert)
+	req.SetAction(ActionInsert)
 
-	table := opio.NewTable("Realtime", 0)
-	table.AddColumn("ID", opio.VtInt32, 0)
-	table.AddColumn("AV", opio.VtDouble, 0)
+	table := NewTable("Realtime", 0)
+	table.AddColumn("ID", VtInt32, 0)
+	table.AddColumn("AV", VtDouble, 0)
 	w_count := 0
 	for {
 		table.Clear()
@@ -511,14 +509,14 @@ func Test_Insert_Realtime_ID_DOUBLE(t *testing.T) {
 
 // 创建点位并写入node节点
 func Test_Insert(t *testing.T) {
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
 	}
-	table := opio.NewTable("Node", 0)
-	table.AddColumn("GN", opio.VtString, 0)
-	table.AddColumn("ED", opio.VtString, 0)
+	table := NewTable("Node", 0)
+	table.AddColumn("GN", VtString, 0)
+	table.AddColumn("ED", VtString, 0)
 
 	_ = table.SetColumnString(0, "W3.AX")
 	_ = table.SetColumnString(1, "W3.AX Test")
@@ -555,7 +553,7 @@ func Test_Insert(t *testing.T) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionInsert)
+	req.SetAction(ActionInsert)
 	_ = req.SetTable(table)
 	_ = req.Write()
 	_ = req.WriteContent(table)
@@ -564,10 +562,10 @@ func Test_Insert(t *testing.T) {
 	res, err := req.GetResponse()
 	rs := res.GetDataSet()
 	format(rs)
-	table = opio.NewTable("Point", 0)
-	table.AddColumn("GN", opio.VtString, 0)
-	table.AddColumn("ED", opio.VtString, 0)
-	table.AddColumn("RT", opio.VtInt32, 0)
+	table = NewTable("Point", 0)
+	table.AddColumn("GN", VtString, 0)
+	table.AddColumn("ED", VtString, 0)
+	table.AddColumn("RT", VtInt32, 0)
 	for i := 0; i < count; i++ {
 		_ = table.SetColumnString(0, "W3.AX.AX"+strconv.Itoa(i))
 		_ = table.SetColumnString(1, "W3.AX Test"+strconv.Itoa(i))
@@ -623,14 +621,14 @@ func Test_Insert(t *testing.T) {
 
 // 更新node节点的基础信息
 func Test_Update(t *testing.T) {
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
 	}
-	table := opio.NewTable("Node", 0)
-	table.AddColumn("GN", opio.VtString, 0)
-	table.AddColumn("ED", opio.VtString, 0)
+	table := NewTable("Node", 0)
+	table.AddColumn("GN", VtString, 0)
+	table.AddColumn("ED", VtString, 0)
 
 	_ = table.SetColumnString(0, "W3.AX")
 	_ = table.SetColumnString(1, "W3.AX Test Test")
@@ -667,7 +665,7 @@ func Test_Update(t *testing.T) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionUpdate)
+	req.SetAction(ActionUpdate)
 	_ = req.SetTable(table)
 	_ = req.Write()
 	_ = req.WriteContent(table)
@@ -676,9 +674,9 @@ func Test_Update(t *testing.T) {
 	res, err := req.GetResponse()
 	rs := res.GetDataSet()
 	format(rs)
-	table = opio.NewTable("Point", 0)
-	table.AddColumn("GN", opio.VtString, 0)
-	table.AddColumn("ED", opio.VtString, 0)
+	table = NewTable("Point", 0)
+	table.AddColumn("GN", VtString, 0)
+	table.AddColumn("ED", VtString, 0)
 	for i := 0; i < count; i++ {
 
 		_ = table.SetColumnString(0, "W3.AX.AX"+strconv.Itoa(i))
@@ -726,7 +724,7 @@ func Test_Update(t *testing.T) {
 // 根据ID删除node节点的点位
 func Test_Remove(t *testing.T) {
 	fmt.Println("host:", host, "port :", port)
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
@@ -734,7 +732,7 @@ func Test_Remove(t *testing.T) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionDelete)
+	req.SetAction(ActionDelete)
 	req.SetTableName("Node")
 	count := 100
 	ids := make([]int32, count)
@@ -754,7 +752,7 @@ func Test_Remove(t *testing.T) {
 // 根据条件返回对应的列
 func Test_Find(t *testing.T) {
 	fmt.Println("host:", host, "port :", port)
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
@@ -762,23 +760,23 @@ func Test_Find(t *testing.T) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionSelect)
-	table := opio.NewTable("Point", 0)
-	//table.AddColumn("*", opio.VtNull, 0)
+	req.SetAction(ActionSelect)
+	table := NewTable("Point", 0)
+	//table.AddColumn("*", VtNull, 0)
 	// 设置要返回的列
-	table.AddColumn("EC", opio.VtInt8, 0)
-	table.AddColumn("ID", opio.VtInt64, 0)
-	table.AddColumn("GN", opio.VtString, 0)
-	table.AddColumn("EX", opio.VtString, 0)
-	table.AddColumn("ED", opio.VtString, 0)
-	table.AddColumn("ND", opio.VtInt32, 0)
-	table.AddColumn("CP", opio.VtInt32, 0)
-	table.AddColumn("PT", opio.VtInt32, 0)
-	table.AddColumn("RT", opio.VtInt32, 0)
+	table.AddColumn("EC", VtInt8, 0)
+	table.AddColumn("ID", VtInt64, 0)
+	table.AddColumn("GN", VtString, 0)
+	table.AddColumn("EX", VtString, 0)
+	table.AddColumn("ED", VtString, 0)
+	table.AddColumn("ND", VtInt32, 0)
+	table.AddColumn("CP", VtInt32, 0)
+	table.AddColumn("PT", VtInt32, 0)
+	table.AddColumn("RT", VtInt32, 0)
 
-	//table.AddColumn("TM", opio.VtDateTime, 0)
-	//table.AddColumn("DS", opio.VtInt16, 0)
-	//table.AddColumn("AV", opio.VtObject, 0)
+	//table.AddColumn("TM", VtDateTime, 0)
+	//table.AddColumn("DS", VtInt16, 0)
+	//table.AddColumn("AV", VtObject, 0)
 	_ = req.SetTable(table)
 	//count := 1000
 	//ids := make([]int32, count)
@@ -804,7 +802,7 @@ func Test_Find(t *testing.T) {
 // 根据筛选条件返回对应的列和满足条件的行
 func Test_FindFilter(t *testing.T) {
 	fmt.Println("host:", host, "port :", port)
-	op, err := opio.Init(host, port, 60, user, pwd)
+	op, err := Init(host, port, 60, user, pwd)
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
@@ -812,23 +810,23 @@ func Test_FindFilter(t *testing.T) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionSelect)
-	table := opio.NewTable("Point", 0)
-	//table.AddColumn("*", opio.VtNull, 0)
+	req.SetAction(ActionSelect)
+	table := NewTable("Point", 0)
+	//table.AddColumn("*", VtNull, 0)
 	// 设置要返回的列
-	table.AddColumn("EC", opio.VtInt8, 0)
-	table.AddColumn("ID", opio.VtInt64, 0)
-	table.AddColumn("GN", opio.VtString, 0)
-	table.AddColumn("EX", opio.VtString, 0)
-	table.AddColumn("ED", opio.VtString, 0)
-	table.AddColumn("ND", opio.VtInt32, 0)
-	table.AddColumn("CP", opio.VtInt32, 0)
-	table.AddColumn("PT", opio.VtInt32, 0)
-	table.AddColumn("RT", opio.VtInt32, 0)
+	table.AddColumn("EC", VtInt8, 0)
+	table.AddColumn("ID", VtInt64, 0)
+	table.AddColumn("GN", VtString, 0)
+	table.AddColumn("EX", VtString, 0)
+	table.AddColumn("ED", VtString, 0)
+	table.AddColumn("ND", VtInt32, 0)
+	table.AddColumn("CP", VtInt32, 0)
+	table.AddColumn("PT", VtInt32, 0)
+	table.AddColumn("RT", VtInt32, 0)
 
-	table.AddColumn("TM", opio.VtDateTime, 0)
-	table.AddColumn("DS", opio.VtInt16, 0)
-	table.AddColumn("AV", opio.VtObject, 0)
+	table.AddColumn("TM", VtDateTime, 0)
+	table.AddColumn("DS", VtInt16, 0)
+	table.AddColumn("AV", VtObject, 0)
 	_ = req.SetTable(table)
 	//count := 1000
 	//ids := make([]int32, count)
@@ -881,7 +879,7 @@ func Test_MultiThreadFind(t *testing.T) {
 // 多线程环境下执行具体查询的操作
 func findByNewProtocol(host string, port int) {
 	//fmt.Println("host:", host, "port :", port)
-	op, err := opio.Init(host, port, 1, "sis", "openplant")
+	op, err := Init(host, port, 1, "sis", "openplant")
 	if err != nil {
 		log.Fatal("init conn error:", err)
 		return
@@ -889,13 +887,13 @@ func findByNewProtocol(host string, port int) {
 	req := op.NewRequest(nil)
 	req.SetID(1)
 	req.SetService("openplant")
-	req.SetAction(opio.ActionSelect)
+	req.SetAction(ActionSelect)
 	tableName := "Point"
 	req.SetTableName(tableName)
-	table := opio.NewTable(tableName, 0)
-	table.AddColumn("EC", opio.VtInt32, 0)
-	table.AddColumn("GN", opio.VtString, 0)
-	table.AddColumn("ID", opio.VtInt32, 0)
+	table := NewTable(tableName, 0)
+	table.AddColumn("EC", VtInt32, 0)
+	table.AddColumn("GN", VtString, 0)
+	table.AddColumn("ID", VtInt32, 0)
 	_ = req.SetTable(table)
 
 	_ = req.Write()
@@ -910,7 +908,7 @@ func findByNewProtocol(host string, port int) {
 
 }
 
-func format2(op *opio.IOConnect, rs *opio.OPDataSet) {
+func format2(op *IOConnect, rs *OPDataSet) {
 
 	//count := 0
 	//for {
@@ -941,7 +939,7 @@ func format2(op *opio.IOConnect, rs *opio.OPDataSet) {
 	fmt.Println(op.GetAddress(), " --resultset row count ", count)
 }
 
-func format(rs *opio.OPDataSet) {
+func format(rs *OPDataSet) {
 	fmt.Println("---------------------------------")
 	//count := 0
 	for {

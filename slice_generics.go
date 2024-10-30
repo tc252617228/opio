@@ -6,7 +6,7 @@
 package opio
 
 import (
-	"opio/driver/internal/utils"
+	"opio/internal/utils"
 
 	"github.com/cheekybits/genny/generic"
 )

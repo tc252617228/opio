@@ -61,7 +61,7 @@ import (
 	"strconv"
 	"time"
 
-	opio "github.com/tc252617228/opio/driver"
+	"github.com/tc252617228/opio"
 )
 
 func main() {

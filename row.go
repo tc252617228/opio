@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tc252617228/opio/driver/internal/utils"
+	"github.com/tc252617228/opio/internal/utils"
 )
 
 type UnPackOPRow struct {
