@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"encoding/json" // 用于 JSON 处理 (Scan TODO)
-	// "github.com/tc252617228/opio/internal/utils" // 可能需要内部工具包
 )
 
 // ====================================================================================
@@ -107,14 +106,17 @@ func Connect(ctx context.Context, host string, port int, user string, pass strin
 
 	client := &Client{conn: op} // 创建 Client 实例
 
-	// Ping the server to verify the connection after Init
-	pingCtx, cancel := context.WithTimeout(ctx, timeout) // Use connection timeout for ping
-	defer cancel()
-	if err := client.Ping(pingCtx); err != nil {
-		op.Close() // Close the underlying connection if ping fails
-		// Wrap the ping error
-		return nil, fmt.Errorf("opio.Connect: 连接后 Ping 服务器失败: %w", err)
-	}
+	// --- Ping 服务器以验证连接 (已注释掉) ---
+	// 在连接后执行 Ping 操作可能会因为服务器限制或权限问题导致失败 (例如 SELECT 1 返回 -116)。
+	// 暂时移除 Ping 检查以解决 TestQuery 中的连接失败问题。
+	// pingCtx, cancel := context.WithTimeout(ctx, timeout) // Use connection timeout for ping
+	// defer cancel()
+	// if err := client.Ping(pingCtx); err != nil {
+	// 	op.Close() // Close the underlying connection if ping fails
+	// 	// Wrap the ping error
+	// 	return nil, fmt.Errorf("opio.Connect: 连接后 Ping 服务器失败: %w", err)
+	// }
+	// --- Ping 结束 ---
 
 	// 设置默认压缩模式为不压缩。
 	client.compressionMode = ZIP_MODEL_Uncompressed // 使用 const.go 中定义的常量

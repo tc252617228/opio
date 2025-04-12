@@ -23,11 +23,11 @@ const (
 	testTimeout = 60 * time.Second // 测试操作的默认超时时间
 
 	// 用于测试的表名和列名 (需要服务器上存在这些表和列)
-	testTableName       = "point"             // 使用 point 表进行查询和订阅测试
-	testQueryColumn     = "ID"                // point 表中的 ID 列
-	testInsertTableName = "test_insert_table" // 用于插入/更新/删除的测试表 (需要预先创建或动态创建/清理) - 测试会跳过此表相关操作
-	testKeyColumn       = "ID"                // point 表中的 ID 列，用于订阅
-	testRealtimeTable   = "Realtime"          // 用于订阅实时数据的表名
+	testTableName       = "point"    // 使用 point 表进行查询和订阅测试
+	testQueryColumn     = "ID"       // point 表中的 ID 列
+	testInsertTableName = "point"    // 用于插入/更新/删除的测试表 (需要预先创建或动态创建/清理) - 测试会跳过此表相关操作
+	testKeyColumn       = "ID"       // point 表中的 ID 列，用于订阅
+	testRealtimeTable   = "Realtime" // 用于订阅实时数据的表名
 )
 
 var (
