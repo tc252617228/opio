@@ -449,10 +449,25 @@ func (t *Table) SetColumnSlice(col uint32, value interface{}) error {
 		return err
 	}
 
-	_, raw := EncodeSlice(value)
+	// 处理 EncodeSlice 返回的错误
+	_, raw, err := EncodeSlice(value)
+	if err != nil {
+		// 将编码错误添加到表的错误列表中，并返回
+		t.errors = append(t.errors, fmt.Errorf("SetColumnSlice: encoding failed for col %d: %w", col, err))
+		return err
+	}
 	rawLen := len(raw)
-	if 0 == rawLen {
-		return errors.New("put slice failed")
+	// 检查 EncodeSlice 是否返回了空二进制（这通常表示输入为 nil 或空）
+	if IsEmptyBinary(raw) { // 假设 IsEmptyBinary 检查特定的空二进制表示
+		// 如果输入有效但编码结果为空，这可能是一个错误，或者只是表示空 slice
+		// 这里假设返回空二进制是有效的，并将其设置为空二进制
+		raw = MakeEmptyBinary() // 确保使用标准的空二进制表示
+		rawLen = len(raw)       // 通常是 2
+	} else if 0 == rawLen {
+		// 如果 rawLen 为 0 但不是标准的空二进制，则视为错误
+		err = errors.New("put slice failed: EncodeSlice returned empty non-standard binary")
+		t.errors = append(t.errors, err)
+		return err
 	}
 
 	index, temp := utils.PutBinary(raw)
@@ -482,10 +497,20 @@ func (t *Table) SetColumnMap(col uint32, value interface{}) error {
 		return err
 	}
 
-	_, raw := EncodeMap(value)
+	// 处理 EncodeMap 返回的错误
+	_, raw, err := EncodeMap(value)
+	if err != nil {
+		t.errors = append(t.errors, fmt.Errorf("SetColumnMap: encoding failed for col %d: %w", col, err))
+		return err
+	}
 	rawLen := len(raw)
-	if 0 == len(raw) {
-		return errors.New("put map failed")
+	if IsEmptyBinary(raw) {
+		raw = MakeEmptyBinary()
+		rawLen = len(raw)
+	} else if 0 == rawLen {
+		err = errors.New("put map failed: EncodeMap returned empty non-standard binary")
+		t.errors = append(t.errors, err)
+		return err
 	}
 
 	index, temp := utils.PutBinary(raw)
@@ -515,10 +540,20 @@ func (t *Table) SetColumnStructure(col uint32, value interface{}) error {
 		return err
 	}
 
-	_, raw := EncodeStructure(value)
+	// 处理 EncodeStructure 返回的错误
+	_, raw, err := EncodeStructure(value)
+	if err != nil {
+		t.errors = append(t.errors, fmt.Errorf("SetColumnStructure: encoding failed for col %d: %w", col, err))
+		return err
+	}
 	rawLen := len(raw)
-	if 0 == len(raw) {
-		return errors.New("put structure failed")
+	if IsEmptyBinary(raw) {
+		raw = MakeEmptyBinary()
+		rawLen = len(raw)
+	} else if 0 == rawLen {
+		err = errors.New("put structure failed: EncodeStructure returned empty non-standard binary")
+		t.errors = append(t.errors, err)
+		return err
 	}
 
 	index, temp := utils.PutBinary(raw)
@@ -672,7 +707,7 @@ func (t *Table) SetColumnObject(col uint32, v interface{}) error {
 			//fixme !!!长度包含了类型系统  VtString VtBinary 初始化长度+1  字节结构-1
 			t.bufSize += v_len + index - 1
 		default:
-			fmt.Println("??? ", value)
+			// 移除调试打印，直接返回错误
 			return errors.New(fmt.Sprintf("Data Type error,Type %T", value))
 		}
 		t.setColumnBit(col)

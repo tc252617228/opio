@@ -33,10 +33,11 @@ func (op *IOConnect) Info() string {
 	return op.info
 }
 
-// Init - create new connection
+// Init - 创建新连接
 func Init(host string, port int, timeout int, user string, pass string) (*IOConnect, error) {
 	op := &IOConnect{nil, host, int32(port), int32(timeout), user, pass, 0, "", nil, "", 0, nil}
-	addr := fmt.Sprintf("%s:%d", host, port)
+	// 使用 net.JoinHostPort 兼容 IPv6
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -61,7 +62,8 @@ func (op *IOConnect) Copy() (*IOConnect, error) {
 // noinspection GoUnusedExportedFunction
 func InitConn(ip string, port int, timeOut int) (*IOConnect, error) {
 	op := &IOConnect{nil, ip, int32(port), int32(timeOut), "", "", 0, "", nil, "", 0, nil}
-	addr := fmt.Sprintf("%s:%d", ip, port)
+	// 使用 net.JoinHostPort 兼容 IPv6
+	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -158,7 +160,7 @@ func (op *IOConnect) login() error {
 		}
 		return nil
 	} else {
-		return errors.New("read header error !!")
+		return errors.New("read header error")
 	}
 
 }
@@ -268,10 +270,11 @@ func (op *IOConnect) Close() (err error) {
 	return err
 }
 
-// Reconnect -
+// Reconnect - 重新连接
 func (op *IOConnect) Reconnect() error {
 	_ = op.conn.Close()
-	addr := fmt.Sprintf("%s:%d", op.host, op.port)
+	// 使用 net.JoinHostPort 兼容 IPv6
+	addr := net.JoinHostPort(op.host, fmt.Sprintf("%d", op.port))
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return err
@@ -288,10 +291,8 @@ func (op *IOConnect) NewRequest(m map[string]interface{}) *Request {
 	}
 	r.Reset()
 
-	if m != nil {
-		for k, v := range m {
-			r.Set(k, v)
-		}
+	for k, v := range m {
+		r.Set(k, v)
 	}
 
 	return r

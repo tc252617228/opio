@@ -1,8 +1,6 @@
 package opio
 
 import (
-	"fmt"
-
 	"github.com/tc252617228/opio/internal/utils"
 )
 
@@ -37,26 +35,26 @@ type opPairBase struct {
 	valType int8
 }
 
-// int-key
+// 整数键
 type opIntPair struct {
 	opPairBase
-	keyPos map[int64]int64 // first:real data key, second: pos+len
+	keyPos map[int64]int64 // 键: 实际数据键, 值: 位置+长度
 }
 
 func newOPIntPair(src []byte, keyType, valType int8, dataStart int) *opIntPair {
 	total := len(src)
 	if 0 == total {
-		fmt.Println("src is empty")
+		// fmt.Println("源数据为空") // 错误信息改为中文
 		//logs.Error("src is empty")
 		return nil
 	}
 	if keyType != VtInt8 && keyType != VtInt16 && keyType != VtInt32 && keyType != VtInt64 {
 		//logs.Error("unsupported integer key type:%v", keyType)
-		fmt.Println("unsupported integer key type:%v", keyType)
+		// fmt.Printf("不支持的整数键类型:%v\n", keyType) // 错误信息改为中文, 使用 Printf
 		return nil
 	}
 
-	// get value len
+	// 获取值长度
 	valFixedLen, isValFixed := fixedTypeLenMap[valType]
 
 	offset := dataStart
@@ -65,7 +63,7 @@ func newOPIntPair(src []byte, keyType, valType int8, dataStart int) *opIntPair {
 	key := int64(0)
 	for offset != total {
 
-		// get key value
+		// 获取键值
 		switch keyType {
 		case VtInt8:
 			key = int64(src[offset])
@@ -84,7 +82,7 @@ func newOPIntPair(src []byte, keyType, valType int8, dataStart int) *opIntPair {
 			offset += VtInt64Len
 		}
 
-		// pos and len, pos:high 32bit, len:low 32bit
+		// 位置和长度, 位置:高32位, 长度:低32位
 		// 记录位置
 		posLen := int64(offset)
 
@@ -119,7 +117,7 @@ func newOPIntPair(src []byte, keyType, valType int8, dataStart int) *opIntPair {
 			}
 			// 将 dataLen 合并到 posLen 中
 			posLen = posLen | int64(headLen+dataLen)
-			// skip to next pair
+			// 跳到下一个键值对
 			offset += dataLen
 		}
 		positions[key] = posLen
@@ -127,7 +125,7 @@ func newOPIntPair(src []byte, keyType, valType int8, dataStart int) *opIntPair {
 
 	if 0 == len(positions) {
 		//logs.Error("data positions is empty")
-		fmt.Println("data positions is empty")
+		// fmt.Println("数据位置信息为空") // 错误信息改为中文
 		return nil
 	}
 
@@ -291,7 +289,9 @@ func (pair *opIntPair) GetSlice(key interface{}) *OPSlice {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeSlice(src[pos : pos+dataLen])
+	// Handle error from DecodeSlice, ignore for getter simplicity
+	opSlice, _ := DecodeSlice(src[pos : pos+dataLen])
+	return opSlice
 }
 func (pair *opIntPair) GetMap(key interface{}) *OPMap {
 	if pair.valType != VtMap {
@@ -310,7 +310,9 @@ func (pair *opIntPair) GetMap(key interface{}) *OPMap {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeMap(src[pos : pos+dataLen])
+	// Handle error from DecodeMap, ignore for getter simplicity
+	opMap, _ := DecodeMap(src[pos : pos+dataLen])
+	return opMap
 }
 
 func (pair *opIntPair) GetStructure(key interface{}) *OPStructure {
@@ -330,7 +332,9 @@ func (pair *opIntPair) GetStructure(key interface{}) *OPStructure {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeStructure(src[pos : pos+dataLen])
+	// Handle error from DecodeStructure, ignore for getter simplicity
+	opStruct, _ := DecodeStructure(src[pos : pos+dataLen])
+	return opStruct
 }
 
 func (pair *opIntPair) AllKeys() []interface{} {
@@ -348,26 +352,26 @@ func (pair *opIntPair) AllKeys() []interface{} {
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
-// float-key
+// 浮点键
 type opFloatPair struct {
 	opPairBase
-	keyPos map[float64]int64 // first:real data key, second: pos+len
+	keyPos map[float64]int64 // 键: 实际数据键, 值: 位置+长度
 }
 
 func newOPFloatPair(src []byte, keyType, valType int8, dataStart int) *opFloatPair {
 	total := len(src)
 	if 0 == total {
-		fmt.Println("src is empty")
+		// fmt.Println("源数据为空") // 错误信息改为中文
 		//logs.Error("src is empty")
 		return nil
 	}
 	if keyType != VtFloat && keyType != VtDouble {
-		fmt.Println("unsupported float key type:%v", keyType)
+		// fmt.Printf("不支持的浮点键类型:%v\n", keyType) // 错误信息改为中文
 		//logs.Error("unsupported float key type:%v", keyType)
 		return nil
 	}
 
-	// get value len
+	// 获取值长度
 	valFixedLen, isValFixed := fixedTypeLenMap[valType]
 
 	offset := dataStart
@@ -376,7 +380,7 @@ func newOPFloatPair(src []byte, keyType, valType int8, dataStart int) *opFloatPa
 	key := float64(0)
 	for offset != total {
 
-		// get key value
+		// 获取键值
 		switch keyType {
 		case VtFloat:
 			key = float64(utils.GetFloat32(src[offset : offset+4]))
@@ -387,7 +391,7 @@ func newOPFloatPair(src []byte, keyType, valType int8, dataStart int) *opFloatPa
 			offset += VtDoubleLen
 		}
 
-		// pos and len, pos:high 32bit, len:low 32bit
+		// 位置和长度, 位置:高32位, 长度:低32位
 		// 记录位置
 		posLen := int64(offset)
 
@@ -422,14 +426,14 @@ func newOPFloatPair(src []byte, keyType, valType int8, dataStart int) *opFloatPa
 			}
 			// 将 dataLen 合并到 posLen 中
 			posLen = posLen | int64(headLen+dataLen)
-			// skip to next pair
+			// 跳到下一个键值对
 			offset += dataLen
 		}
 		positions[key] = posLen
 	}
 
 	if 0 == len(positions) {
-		fmt.Println("data positions is empty")
+		// fmt.Println("数据位置信息为空") // 错误信息改为中文
 		//logs.Error("data positions is empty")
 		return nil
 	}
@@ -593,7 +597,9 @@ func (pair *opFloatPair) GetSlice(key interface{}) *OPSlice {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeSlice(src[pos : pos+dataLen])
+	// Handle error from DecodeSlice, ignore for getter simplicity
+	opSlice, _ := DecodeSlice(src[pos : pos+dataLen])
+	return opSlice
 }
 func (pair *opFloatPair) GetMap(key interface{}) *OPMap {
 	if pair.valType != VtMap {
@@ -612,7 +618,9 @@ func (pair *opFloatPair) GetMap(key interface{}) *OPMap {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeMap(src[pos : pos+dataLen])
+	// Handle error from DecodeMap, ignore for getter simplicity
+	opMap, _ := DecodeMap(src[pos : pos+dataLen])
+	return opMap
 }
 
 func (pair *opFloatPair) GetStructure(key interface{}) *OPStructure {
@@ -632,7 +640,9 @@ func (pair *opFloatPair) GetStructure(key interface{}) *OPStructure {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeStructure(src[pos : pos+dataLen])
+	// Handle error from DecodeStructure, ignore for getter simplicity
+	opStruct, _ := DecodeStructure(src[pos : pos+dataLen])
+	return opStruct
 }
 
 func (pair *opFloatPair) AllKeys() []interface{} {
@@ -650,26 +660,26 @@ func (pair *opFloatPair) AllKeys() []interface{} {
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
-// string-key
+// 字符串键
 type opStringPair struct {
 	opPairBase
-	keyPos map[string]int64 // first:real data key, second: pos+len
+	keyPos map[string]int64 // 键: 实际数据键, 值: 位置+长度
 }
 
 func newOPStringPair(src []byte, keyType, valType int8, dataStart int) *opStringPair {
 	total := len(src)
 	if 0 == total {
-		fmt.Println("src is empty")
+		// fmt.Println("源数据为空") // 错误信息改为中文
 		//logs.Error("src is empty")
 		return nil
 	}
 	if keyType != VtString {
-		fmt.Println("unsupported string key type:%v", keyType)
+		// fmt.Printf("不支持的字符串键类型:%v\n", keyType) // 错误信息改为中文, 使用 Printf
 		//logs.Error("unsupported string key type:%v", keyType)
 		return nil
 	}
 
-	// get value len
+	// 获取值长度
 	valFixedLen, isValFixed := fixedTypeLenMap[valType]
 
 	offset := dataStart
@@ -678,7 +688,7 @@ func newOPStringPair(src []byte, keyType, valType int8, dataStart int) *opString
 	key := ""
 	for offset != total {
 
-		// get key value
+		// 获取键值
 		keyLenCode := uint8(src[offset])
 		offset++
 		keyLen := 0
@@ -694,9 +704,9 @@ func newOPStringPair(src []byte, keyType, valType int8, dataStart int) *opString
 			offset += 4
 		}
 		key = string(src[offset : offset+keyLen])
-		offset += keyLen // skip to value
+		offset += keyLen // 跳到值
 
-		// pos and len, pos:high 32bit, len:low 32bit
+		// 位置和长度, 位置:高32位, 长度:低32位
 		// 记录位置
 		posLen := int64(offset)
 
@@ -731,14 +741,14 @@ func newOPStringPair(src []byte, keyType, valType int8, dataStart int) *opString
 			}
 			// 将 dataLen 合并到 posLen 中
 			posLen = posLen | int64(headLen+dataLen)
-			// skip to next pair
+			// 跳到下一个键值对
 			offset += dataLen
 		}
 		positions[key] = posLen
 	}
 
 	if 0 == len(positions) {
-		fmt.Println("data positions is empty")
+		// fmt.Println("数据位置信息为空") // 错误信息改为中文
 		//logs.Error("data positions is empty")
 		return nil
 	}
@@ -903,7 +913,9 @@ func (pair *opStringPair) GetSlice(key interface{}) *OPSlice {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeSlice(src[pos : pos+dataLen])
+	// Handle error from DecodeSlice, ignore for getter simplicity
+	opSlice, _ := DecodeSlice(src[pos : pos+dataLen])
+	return opSlice
 }
 func (pair *opStringPair) GetMap(key interface{}) *OPMap {
 	if pair.valType != VtMap {
@@ -922,7 +934,9 @@ func (pair *opStringPair) GetMap(key interface{}) *OPMap {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeMap(src[pos : pos+dataLen])
+	// Handle error from DecodeMap, ignore for getter simplicity
+	opMap, _ := DecodeMap(src[pos : pos+dataLen])
+	return opMap
 }
 func (pair *opStringPair) GetStructure(key interface{}) *OPStructure {
 	if pair.valType != VtStructure {
@@ -941,7 +955,9 @@ func (pair *opStringPair) GetStructure(key interface{}) *OPStructure {
 	pos := (posLen & 0x7FFFFFFF00000000) >> 32
 	dataLen := posLen & 0xFFFFFFFF
 
-	return DecodeStructure(src[pos : pos+dataLen])
+	// Handle error from DecodeStructure, ignore for getter simplicity
+	opStruct, _ := DecodeStructure(src[pos : pos+dataLen])
+	return opStruct
 }
 
 func (pair *opStringPair) AllKeys() []interface{} {

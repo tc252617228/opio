@@ -222,7 +222,9 @@ func (ops *OPStructure) GetSlice(fieldName string) *OPSlice {
 	pos := field.pos
 	valLen := field.dataLen
 	valBytes := data[pos : pos+valLen]
-	return DecodeSlice(valBytes)
+	// Handle error from DecodeSlice, ignore for getter simplicity
+	opSlice, _ := DecodeSlice(valBytes)
+	return opSlice
 }
 
 func (ops *OPStructure) GetMap(fieldName string) *OPMap {
@@ -241,7 +243,9 @@ func (ops *OPStructure) GetMap(fieldName string) *OPMap {
 	pos := field.pos
 	valLen := field.dataLen
 	valBytes := data[pos : pos+valLen]
-	return DecodeMap(valBytes)
+	// Handle error from DecodeMap, ignore for getter simplicity
+	opMap, _ := DecodeMap(valBytes)
+	return opMap
 }
 
 func (ops *OPStructure) GetStructure(fieldName string) *OPStructure {
@@ -260,7 +264,9 @@ func (ops *OPStructure) GetStructure(fieldName string) *OPStructure {
 	pos := field.pos
 	valLen := field.dataLen
 	valBytes := data[pos : pos+valLen]
-	return DecodeStructure(valBytes)
+	// Handle error from DecodeStructure, ignore for getter simplicity
+	opStruct, _ := DecodeStructure(valBytes)
+	return opStruct
 }
 
 func (ops *OPStructure) Get(fieldName string) interface{} {
@@ -305,13 +311,19 @@ func (ops *OPStructure) Get(fieldName string) interface{} {
 		return utils.GetString(valBytes)
 
 	case VtSlice:
-		return DecodeSlice(valBytes)
+		// Handle error from DecodeSlice, ignore for getter simplicity
+		opSlice, _ := DecodeSlice(valBytes)
+		return opSlice
 
 	case VtMap:
-		return DecodeMap(valBytes)
+		// Handle error from DecodeMap, ignore for getter simplicity
+		opMap, _ := DecodeMap(valBytes)
+		return opMap
 
 	case VtStructure:
-		return DecodeStructure(valBytes)
+		// Handle error from DecodeStructure, ignore for getter simplicity
+		opStruct, _ := DecodeStructure(valBytes)
+		return opStruct
 	}
 	return nil
 }
@@ -388,19 +400,25 @@ func (ops *OPStructure) Range(f func(key string, value interface{}) bool) {
 			}
 
 		case VtSlice:
-			if !f(dataKey, DecodeSlice(raw)) {
+			// Handle error from DecodeSlice, ignore for Range simplicity
+			opSlice, _ := DecodeSlice(raw)
+			if !f(dataKey, opSlice) {
 				breakLoop = true
 				break
 			}
 
 		case VtMap:
-			if !f(dataKey, DecodeMap(raw)) {
+			// Handle error from DecodeMap, ignore for Range simplicity
+			opMap, _ := DecodeMap(raw)
+			if !f(dataKey, opMap) {
 				breakLoop = true
 				break
 			}
 
 		case VtStructure:
-			if !f(dataKey, DecodeStructure(raw)) {
+			// Handle error from DecodeStructure, ignore for Range simplicity
+			opStruct, _ := DecodeStructure(raw)
+			if !f(dataKey, opStruct) {
 				breakLoop = true
 				break
 			}
@@ -469,27 +487,30 @@ func (ops *OPStructure) String(prettify bool) string {
 			res += utils.GetString(raw)
 
 		case VtSlice:
-			opSlice := DecodeSlice(raw)
+			// Handle error from DecodeSlice, ignore for String simplicity
+			opSlice, _ := DecodeSlice(raw)
 			if opSlice != nil {
 				res += opSlice.String(prettify)
 			} else {
-				res += "nil"
+				res += "nil" // Or indicate error
 			}
 
 		case VtMap:
-			opMap := DecodeMap(raw)
+			// Handle error from DecodeMap, ignore for String simplicity
+			opMap, _ := DecodeMap(raw)
 			if opMap != nil {
 				res += opMap.String(prettify)
 			} else {
-				res += "nil"
+				res += "nil" // Or indicate error
 			}
 
 		case VtStructure:
-			opStr := DecodeStructure(raw)
-			if opStr != nil {
-				res += opStr.String(prettify)
+			// Handle error from DecodeStructure, ignore for String simplicity
+			opStruct, _ := DecodeStructure(raw)
+			if opStruct != nil {
+				res += opStruct.String(prettify)
 			} else {
-				res += "nil"
+				res += "nil" // Or indicate error
 			}
 		default:
 		}
@@ -525,29 +546,34 @@ func (ops *OPStructure) String(prettify bool) string {
    field value (variable-length bytes)
 */
 
-func EncodeStructure(value interface{}) (int, []byte) {
+// EncodeStructure encodes a Go struct into opio structure format bytes.
+// Returns headLen, rawData, error.
+func EncodeStructure(value interface{}) (int, []byte, error) {
 	if nil == value {
-		return 0, MakeEmptyBinary()
+		return 0, MakeEmptyBinary(), nil
 	}
 	rv := reflect.Indirect(reflect.ValueOf(value))
 	rvKind := rv.Kind()
 	if rvKind != reflect.Struct {
-		fmt.Println("value is not structure")
-		return 0, nil
+		return 0, nil, fmt.Errorf("EncodeStructure: value is not a struct, type is %v", rvKind)
 	}
 	rt := rv.Type()
 
 	fieldNum := rv.NumField()
 	if 0 == fieldNum {
-		return 0, MakeEmptyBinary()
+		return 0, MakeEmptyBinary(), nil
 	}
 
-	// 数据体BUFFER
+	// Body buffer
 	bodyBuff := utils.MBuffer{}
 	fieldBuff := utils.MBuffer{}
 
+	var raw []byte
+	var err error
+	var headLen int // To receive headLen from Encode* calls
+
 	for i := 0; i < fieldNum; i++ {
-		// field依然遵循TLV原则
+		// field follows TLV principle
 
 		field := rt.Field(i)
 		val := rv.Field(i)
@@ -555,11 +581,10 @@ func EncodeStructure(value interface{}) (int, []byte) {
 		valKind := val.Kind()
 		valType, ok := wholeReflectTypeMap[valKind]
 		if !ok {
-			fmt.Println("unsupported value type:%v", valKind)
-			return 0, nil
+			return 0, nil, fmt.Errorf("EncodeStructure: unsupported field type: %v for field %s", valKind, field.Name)
 		}
 
-		// 重置fieldBuff
+		// Reset fieldBuff
 		fieldBuff.Reset()
 
 		/*
@@ -568,38 +593,37 @@ func EncodeStructure(value interface{}) (int, []byte) {
 		*/
 		fieldName := field.Name
 		nameLen := len(fieldName)
-		if nameLen > 0x100 {
-			fmt.Println("name len too long, name:%v", fieldName)
-			return 0, nil
+		if nameLen > 0xFF { // Max length for uint8
+			return 0, nil, fmt.Errorf("EncodeStructure: field name too long (max 255): %s", fieldName)
 		}
-		// write name len
-		_, _ = fieldBuff.Write(utils.Int8ToByte(int8(nameLen)))
-		// write name
+		// Write field name length (1 byte)
+		_, _ = fieldBuff.Write([]byte{byte(nameLen)})
+		// Write field name
 		_, _ = fieldBuff.Write(utils.StringToBytes(fieldName))
 		/*
-		   fieldTag len                 (1 byte)(possible)
-		   fieldTag                     (variable-length bytes)(possible)
+		   字段标签长度                 (1 byte)(可能存在)
+		   字段标签                     (variable-length bytes)(可能存在)
 		*/
 		fieldTag := field.Tag
 		tagLen := len(fieldTag)
 		if tagLen > 0 {
-			if tagLen > 0x100 {
-				fmt.Println("tag len too long, tagLen:%v", fieldTag)
-				return 0, nil
+			if tagLen > 0xFF { // Max length for uint8
+				return 0, nil, fmt.Errorf("EncodeStructure: field tag too long (max 255) for field %s: %s", fieldName, fieldTag)
 			}
-			// write tag flag
-			_, _ = fieldBuff.Write([]byte{byte(1)})
-
-			// write tag len
-			_, _ = fieldBuff.Write(utils.Int8ToByte(int8(tagLen)))
-			// write tag
+			// Write tag flag (1 = present)
+			_, _ = fieldBuff.Write([]byte{1})
+			// Write tag length (1 byte)
+			_, _ = fieldBuff.Write([]byte{byte(tagLen)})
+			// Write tag
 			_, _ = fieldBuff.Write(utils.StringToBytes(string(fieldTag)))
 		} else {
-			// write tag flag
-			_, _ = fieldBuff.Write([]byte{byte(0)})
+			// Write tag flag (0 = absent)
+			_, _ = fieldBuff.Write([]byte{0})
 		}
 
-		// write value
+		// Write value
+		raw = nil // Reset raw
+		err = nil // Reset err
 		switch valKind {
 		case reflect.Int8:
 			_, _ = fieldBuff.Write(utils.Int8ToByte(int8(val.Int())))
@@ -636,60 +660,69 @@ func EncodeStructure(value interface{}) (int, []byte) {
 			_, _ = fieldBuff.Write(utils.Float64ToByte(val.Float()))
 
 		case reflect.String:
-			_, raw := utils.PutString(val.String())
+			_, raw = utils.PutString(val.String())
 			_, _ = fieldBuff.Write(raw)
 
 		case reflect.Array:
 			fallthrough
 		case reflect.Slice:
-			_, raw := EncodeSlice(val.Interface())
+			headLen, raw, err = EncodeSlice(val.Interface()) // Returns error
+			if err != nil {
+				return 0, nil, fmt.Errorf("EncodeStructure: encoding slice field %s failed: %w", fieldName, err)
+			}
 			_, _ = fieldBuff.Write(raw)
 
 		case reflect.Map:
-			_, raw := EncodeMap(val.Interface())
+			headLen, raw, err = EncodeMap(val.Interface()) // Returns error
+			if err != nil {
+				return 0, nil, fmt.Errorf("EncodeStructure: encoding map field %s failed: %w", fieldName, err)
+			}
 			_, _ = fieldBuff.Write(raw)
 
 		case reflect.Struct:
-			_, raw := EncodeStructure(val.Interface())
+			// Recursive call, handle error
+			headLen, raw, err = EncodeStructure(val.Interface())
+			if err != nil {
+				return 0, nil, fmt.Errorf("EncodeStructure: encoding struct field %s failed: %w", fieldName, err)
+			}
 			_, _ = fieldBuff.Write(raw)
-
 		}
 
 		/*
-		   write one field
+		   写入一个字段
 		*/
-		// write field data type
+		// 写入字段数据类型
 		_, _ = bodyBuff.Write(utils.Int8ToByte(valType))
 
-		// write field len
+		// 写入字段长度
 		fieldBytes := fieldBuff.Bytes()
 		fieldLen := len(fieldBytes)
+		// Write field length encoding and length
 		switch {
 		case fieldLen < 0x100:
-			_, _ = bodyBuff.Write(utils.UInt8ToByte(mpBin8))
-			_, _ = bodyBuff.Write(utils.Int8ToByte(int8(fieldLen)))
-
+			_, _ = bodyBuff.Write([]byte{mpBin8, byte(fieldLen)})
 		case fieldLen < 0x10000:
-			_, _ = bodyBuff.Write(utils.UInt8ToByte(mpBin16))
-			_, _ = bodyBuff.Write(utils.Int16ToByte(int16(fieldLen)))
-
+			_, _ = bodyBuff.Write([]byte{mpBin16, byte(fieldLen >> 8), byte(fieldLen)})
 		case fieldLen < 0x10000000:
-			_, _ = bodyBuff.Write(utils.UInt8ToByte(mpBin32))
-			_, _ = bodyBuff.Write(utils.Int32ToByte(int32(fieldLen)))
+			_, _ = bodyBuff.Write([]byte{mpBin32, byte(fieldLen >> 24), byte(fieldLen >> 16), byte(fieldLen >> 8), byte(fieldLen)})
+		default:
+			// Handle potential error for extremely large fields if necessary
+			return 0, nil, fmt.Errorf("EncodeStructure: field %s is too large (%d bytes)", fieldName, fieldLen)
 		}
-		// write field value
+		// Write field value bytes
 		_, _ = bodyBuff.Write(fieldBytes)
 	}
 
-	// write head and body
+	// 写入头部和主体
 	bodyBytes := bodyBuff.Bytes()
 	bodyLen := len(bodyBytes)
 	if 0 == bodyLen {
-		fmt.Println("struct body is empty")
-		return 0, nil
+		// This case should ideally not happen if fieldNum > 0, but handle defensively
+		return 0, MakeEmptyBinary(), nil // Return empty binary for empty body
 	}
+
 	var rawData []byte = nil
-	headLen := 0
+	headLen = 0 // Reset headLen for the final structure encoding
 	switch {
 	case bodyLen < 0x100:
 		headLen = 2
@@ -713,147 +746,293 @@ func EncodeStructure(value interface{}) (int, []byte) {
 		rawData[3] = byte(bodyLen >> 8)
 		rawData[4] = byte(bodyLen)
 	}
-	if 0 == headLen {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+	if 0 == headLen || rawData == nil {
+		return 0, nil, fmt.Errorf("EncodeStructure: failed to create head, bodyLen: %v", bodyLen)
 	}
 
 	copy(rawData[headLen:], bodyBuff.Bytes())
 
-	return headLen, rawData
+	return headLen, rawData, nil
 }
 
-func DecodeStructure(src []byte) *OPStructure {
-	// 判断空值标记
+// DecodeStructure decodes opio structure format bytes into an OPStructure object.
+// Returns *OPStructure, error.
+func DecodeStructure(src []byte) (*OPStructure, error) {
+	// Handle empty binary
 	if IsEmptyBinary(src) {
-		return nil
+		return nil, nil // Return nil object and nil error for empty binary
 	}
 
 	srcLen := len(src)
-	offset := 0
+	var offset int // Re-declare offset
 
-	// len code
-	bodyLenCode := uint8(src[0])
-	offset++
+	// 长度编码 (bodyLenCode is no longer used)
+	// bodyLenCode := uint8(src[0])
+	// offset++
 
-	// 略过数据长度向前移动游标
-	switch bodyLenCode {
-	case mpBin8:
-		offset++
-	case mpBin16:
-		offset += 2
-	case mpBin32:
-		offset += 4
+	// Decode head to get body length and head length
+	bodyLen, headLen, err := DecodeHead(src)
+	if err != nil {
+		return nil, fmt.Errorf("DecodeStructure: failed to decode head: %w", err)
 	}
-	// 取数据
+	// Basic validation
+	if headLen+bodyLen != srcLen {
+		return nil, fmt.Errorf("DecodeStructure: inconsistent length information (headLen=%d, bodyLen=%d, srcLen=%d)", headLen, bodyLen, srcLen)
+	}
+	if bodyLen == 0 {
+		// Empty struct body
+		opStructure := &OPStructure{}
+		opStructure.SetData(src) // Set original data even if body is empty
+		opStructure.fields = make(map[string]*OPField)
+		return opStructure, nil
+	}
+
+	offset = headLen // Start decoding from the beginning of the body
+
+	// Copy source data
 	data := make([]byte, srcLen)
 	copy(data, src)
 
 	opStructure := &OPStructure{}
-	opStructure.SetData(data)
+	opStructure.SetData(data) // Set the copied data
 
 	dataStart := offset
-	fields := decodeOPFields(data, dataStart)
+	// decodeOPFields might need error handling in the future
+	fields, err := decodeOPFields(data, dataStart, srcLen) // Pass total length for bounds checking
+	if err != nil {
+		return nil, fmt.Errorf("DecodeStructure: failed to decode fields: %w", err)
+	}
 	opStructure.fields = fields
-	return opStructure
+	return opStructure, nil
 }
 
-func decodeOPFields(src []byte, dataStart int) map[string]*OPField {
-	total := len(src)
-	if 0 == total {
-		return nil
+// decodeOPFields decodes the fields from the structure body.
+// Returns map[string]*OPField, error.
+func decodeOPFields(src []byte, dataStart int, srcTotalLen int) (map[string]*OPField, error) {
+	if dataStart >= srcTotalLen && srcTotalLen > 0 { // Allow empty source if dataStart is 0
+		// Nothing to decode if start offset is already at or beyond the end
+		return make(map[string]*OPField), nil
+	}
+	if dataStart < 0 {
+		return nil, fmt.Errorf("invalid dataStart offset: %d", dataStart)
 	}
 
-	res := make(map[string]*OPField, 1024)
+	res := make(map[string]*OPField, 16) // Start with a smaller capacity
 
 	offset := dataStart
-	for offset != total {
-		// decode field data type
+	for offset < srcTotalLen {
+		// Decode field type
+		if offset >= srcTotalLen {
+			return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading field type", offset, srcTotalLen)
+		}
 		fieldType := int8(src[offset])
 		offset++
 
-		// get value len
+		// Get fixed length if applicable
 		fixedLen, isFixed := fixedTypeLenMap[fieldType]
 
-		// decode field len code
+		// Decode field length code
+		if offset >= srcTotalLen {
+			return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading field length code", offset, srcTotalLen)
+		}
 		fieldLenCode := uint8(src[offset])
 		offset++
 
-		// 解field内容时无需解field长度，直接将offset按code向前移动
+		// Decode field length based on code
+		fieldDataLen := 0
 		switch fieldLenCode {
 		case mpBin8:
+			if offset >= srcTotalLen {
+				return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading field length (mpBin8)", offset, srcTotalLen)
+			}
+			fieldDataLen = int(src[offset])
 			offset++
 		case mpBin16:
+			if offset+1 >= srcTotalLen {
+				return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading field length (mpBin16)", offset, srcTotalLen)
+			}
+			fieldDataLen = int(src[offset])<<8 | int(src[offset+1])
 			offset += 2
 		case mpBin32:
+			if offset+3 >= srcTotalLen {
+				return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading field length (mpBin32)", offset, srcTotalLen)
+			}
+			fieldDataLen = int(src[offset])<<24 | int(src[offset+1])<<16 | int(src[offset+2])<<8 | int(src[offset+3])
 			offset += 4
+		default:
+			return nil, fmt.Errorf("invalid field length code: %x at offset %d", fieldLenCode, offset-1)
 		}
 
-		// decode name
+		// Check if the decoded field length makes sense
+		fieldStartOffset := offset // Start of the actual field data (name, tag, value)
+		if fieldStartOffset+fieldDataLen > srcTotalLen {
+			return nil, fmt.Errorf("field data length (%d) exceeds source bounds (%d) at offset %d", fieldDataLen, srcTotalLen, fieldStartOffset)
+		}
+
+		// Decode field name
+		if offset >= srcTotalLen {
+			return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading name length", offset, srcTotalLen)
+		}
 		nameLen := int(src[offset])
 		offset++
+		if offset+nameLen > srcTotalLen {
+			return nil, fmt.Errorf("offset (%d + %d) out of bounds (%d) when reading name", offset, nameLen, srcTotalLen)
+		}
 		fieldName := utils.BytesToString(src[offset : offset+nameLen])
 		offset += nameLen
 
-		// decode tag
+		// Decode field tag
+		if offset >= srcTotalLen {
+			return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading tag flag", offset, srcTotalLen)
+		}
 		tagFlag := int8(src[offset])
 		offset++
 		fieldTag := ""
-		if 1 == tagFlag {
+		if tagFlag == 1 {
+			if offset >= srcTotalLen {
+				return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading tag length", offset, srcTotalLen)
+			}
 			tagLen := int(src[offset])
 			offset++
+			if offset+tagLen > srcTotalLen {
+				return nil, fmt.Errorf("offset (%d + %d) out of bounds (%d) when reading tag", offset, tagLen, srcTotalLen)
+			}
 			fieldTag = utils.BytesToString(src[offset : offset+tagLen])
 			offset += tagLen
+		} else if tagFlag != 0 {
+			return nil, fmt.Errorf("invalid tag flag: %d at offset %d", tagFlag, offset-1)
 		}
 
-		// decode value pos
-		// pos and len, pos:high 32bit, len:low 32bit
-		// 记录位置
+		// Decode value position and length
+		// dataPos is the start of the value's encoded representation within the field data
 		dataPos := offset
+		valLen := 0 // This is the length of the *encoded* value (including head for var-len types)
 
-		// 计算长度
-		valLen := 0
 		if isFixed {
-			// value是固定长度的类型,offset直接跳过固定长度到下一个pair,posLen记录的只是位置，不记录长度，并且位置记录在低32位
-			offset += int(fixedLen)
 			valLen = int(fixedLen)
-		} else {
-			// value是变长类型,需要根据valType计算数据的长度,posLen记录的是位置+长度
-			headLen := 0
-
-			lenCode := src[offset]
-			offset++
-			headLen++
-
-			dataLen := int(0)
-			switch lenCode {
-			case mpBin8:
-				dataLen = int(src[offset])
-				offset++
-				headLen++
-			case mpBin16:
-				dataLen = int(src[offset])<<8 | int(src[offset+1])
-				offset += 2
-				headLen += 2
-			case mpBin32:
-				dataLen = int(src[offset])<<24 | int(src[offset+1])<<16 | int(src[offset+2])<<8 | int(src[offset+3])
-				offset += 4
-				headLen += 4
+			if offset+valLen > fieldStartOffset+fieldDataLen { // Check against the field boundary
+				return nil, fmt.Errorf("fixed value length (%d) exceeds field data bounds for field %s", valLen, fieldName)
 			}
-			// 将 dataLen 合并到 posLen 中
-			valLen = headLen + dataLen
-			// skip to next field
-			offset += dataLen
+			offset += valLen
+		} else {
+			// For variable length types, the value itself is encoded (head + body)
+			// We need to determine the total length of this encoded value.
+			if offset >= fieldStartOffset+fieldDataLen {
+				return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading variable value head for field %s", offset, fieldStartOffset+fieldDataLen, fieldName)
+			}
+			valHeadLen := 0
+			valBodyLen := 0
+			valLenCode := src[offset]
+			offset++
+			valHeadLen++
+
+			switch valLenCode {
+			case mpBin8:
+				if offset >= fieldStartOffset+fieldDataLen {
+					return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading variable value length (mpBin8) for field %s", offset, fieldStartOffset+fieldDataLen, fieldName)
+				}
+				valBodyLen = int(src[offset])
+				offset++
+				valHeadLen++
+			case mpBin16:
+				if offset+1 >= fieldStartOffset+fieldDataLen {
+					return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading variable value length (mpBin16) for field %s", offset, fieldStartOffset+fieldDataLen, fieldName)
+				}
+				valBodyLen = int(src[offset])<<8 | int(src[offset+1])
+				offset += 2
+				valHeadLen += 2
+			case mpBin32:
+				if offset+3 >= fieldStartOffset+fieldDataLen {
+					return nil, fmt.Errorf("offset (%d) out of bounds (%d) when reading variable value length (mpBin32) for field %s", offset, fieldStartOffset+fieldDataLen, fieldName)
+				}
+				valBodyLen = int(src[offset])<<24 | int(src[offset+1])<<16 | int(src[offset+2])<<8 | int(src[offset+3])
+				offset += 4
+				valHeadLen += 4
+			default:
+				// Check for simple types like Nil, True, False if applicable, otherwise error
+				// Assuming only mpBin* are valid heads for var-len types here.
+				return nil, fmt.Errorf("invalid variable value length code: %x for field %s at offset %d", valLenCode, fieldName, offset-1)
+			}
+
+			valLen = valHeadLen + valBodyLen
+			if dataPos+valLen > fieldStartOffset+fieldDataLen { // Check against the field boundary
+				return nil, fmt.Errorf("variable value length (%d) exceeds field data bounds for field %s", valLen, fieldName)
+			}
+			// Move offset past the value body
+			offset += valBodyLen
 		}
 
-		// generate OPField
+		// Ensure the final offset for this field matches the expected end based on fieldDataLen
+		expectedFieldEndOffset := fieldStartOffset + fieldDataLen
+		if offset != expectedFieldEndOffset {
+			return nil, fmt.Errorf("field %s decoding finished at unexpected offset %d (expected %d)", fieldName, offset, expectedFieldEndOffset)
+		}
+
+		// Create OPField
 		field := &OPField{
 			Name:    fieldName,
 			Tag:     reflect.StructTag(fieldTag),
 			Type:    fieldType,
-			pos:     dataPos,
-			dataLen: valLen,
+			pos:     dataPos, // Position within the original src byte slice where the value starts
+			dataLen: valLen,  // Length of the encoded value (head+body for var-len)
+		}
+		if _, exists := res[fieldName]; exists {
+			return nil, fmt.Errorf("duplicate field name detected: %s", fieldName)
 		}
 		res[fieldName] = field
 	}
-	return res
+
+	// Final check: ensure we consumed the entire relevant part of the source buffer
+	if offset != srcTotalLen {
+		return nil, fmt.Errorf("decoding finished at offset %d, but expected end was %d", offset, srcTotalLen)
+	}
+
+	return res, nil
+}
+
+// DecodeHead is a helper to decode the common head format (len code + len)
+// Returns bodyLen, headLen, error
+func DecodeHead(src []byte) (bodyLen int, headLen int, err error) {
+	srcLen := len(src)
+	if srcLen < 1 {
+		return 0, 0, fmt.Errorf("DecodeHead: source is empty")
+	}
+
+	lenCode := src[0]
+	headLen = 1 // Start with the lenCode byte
+
+	switch lenCode {
+	case mpBin8:
+		if srcLen < 2 {
+			return 0, 0, fmt.Errorf("DecodeHead: insufficient data for mpBin8 length (need 2, got %d)", srcLen)
+		}
+		bodyLen = int(src[1])
+		headLen += 1
+	case mpBin16:
+		if srcLen < 3 {
+			return 0, 0, fmt.Errorf("DecodeHead: insufficient data for mpBin16 length (need 3, got %d)", srcLen)
+		}
+		bodyLen = int(src[1])<<8 | int(src[2])
+		headLen += 2
+	case mpBin32:
+		if srcLen < 5 {
+			return 0, 0, fmt.Errorf("DecodeHead: insufficient data for mpBin32 length (need 5, got %d)", srcLen)
+		}
+		bodyLen = int(src[1])<<24 | int(src[2])<<16 | int(src[3])<<8 | int(src[4])
+		headLen += 4
+	// Add cases for other potential single-byte codes if necessary (e.g., Nil, True, False)
+	// case mpNil: bodyLen = 0; headLen = 1;
+	default:
+		// Check if it's a fixed-length type code or other valid single-byte code?
+		// For now, assume only mpBin* are valid heads for data containers.
+		return 0, 0, fmt.Errorf("DecodeHead: invalid length code: %x", lenCode)
+	}
+
+	// Validate calculated total length against source length
+	if headLen+bodyLen > srcLen {
+		// This check might be redundant if DecodeStructure already does it, but good for safety.
+		// return 0, 0, fmt.Errorf("DecodeHead: calculated length (head=%d, body=%d) exceeds source length (%d)", headLen, bodyLen, srcLen)
+	}
+
+	return bodyLen, headLen, nil
 }

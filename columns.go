@@ -113,7 +113,8 @@ func (col *Column) write(io *utils.Buffer) error {
 	var n = uint32(3)
 	var isHaveExt bool
 
-	if col.ext != nil && len(col.ext) > 0 {
+	// 检查扩展信息是否存在
+	if len(col.ext) > 0 {
 		isHaveExt = true
 		n = 4
 	}

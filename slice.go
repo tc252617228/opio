@@ -14,8 +14,8 @@ const (
 
 type OPSlice struct {
 	utils.BytesBase
-	eleType int8     // 元素类型, see "Value type" in environment/opio/driver/const.go
-	iter    Iterator // 迭代器
+	eleType int8     // 元素类型, 参考 opio.Vt* 常量
+	iter    Iterator // 迭代器，用于遍历 slice 中的元素
 }
 
 func (ops *OPSlice) GetDataType() int8 {
@@ -388,7 +388,9 @@ func (ops *OPSlice) GetSlice() *OPSlice {
 		return nil
 	}
 	start, end := ops.iter.curr()
-	return DecodeSlice(data[start:end])
+	// Handle error from DecodeSlice
+	opSlice, _ := DecodeSlice(data[start:end]) // Ignore error for simplicity in getter
+	return opSlice
 }
 
 func (ops *OPSlice) GetSlices() []*OPSlice {
@@ -413,7 +415,9 @@ func (ops *OPSlice) GetSlices() []*OPSlice {
 	i := 0
 	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
 		start, end := ops.iter.curr()
-		res[i] = DecodeSlice(data[start:end])
+		// Handle error from DecodeSlice
+		opSlice, _ := DecodeSlice(data[start:end]) // Ignore error for simplicity in getter
+		res[i] = opSlice
 	}
 	return res
 }
@@ -430,7 +434,9 @@ func (ops *OPSlice) GetMap() *OPMap {
 		return nil
 	}
 	start, end := ops.iter.curr()
-	return DecodeMap(data[start:end])
+	// Handle error from DecodeMap, ignore for getter simplicity
+	opMap, _ := DecodeMap(data[start:end])
+	return opMap
 }
 
 func (ops *OPSlice) GetMaps() []*OPMap {
@@ -455,7 +461,9 @@ func (ops *OPSlice) GetMaps() []*OPMap {
 	i := 0
 	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
 		start, end := ops.iter.curr()
-		res[i] = DecodeMap(data[start:end])
+		// Handle error from DecodeMap, ignore for getter simplicity
+		opMap, _ := DecodeMap(data[start:end])
+		res[i] = opMap
 	}
 	return res
 }
@@ -472,7 +480,9 @@ func (ops *OPSlice) GetStructure() *OPStructure {
 		return nil
 	}
 	start, end := ops.iter.curr()
-	return DecodeStructure(data[start:end])
+	// Handle error from DecodeStructure, ignore for getter simplicity
+	opStruct, _ := DecodeStructure(data[start:end])
+	return opStruct
 }
 
 func (ops *OPSlice) GetStructures() []*OPStructure {
@@ -497,7 +507,9 @@ func (ops *OPSlice) GetStructures() []*OPStructure {
 	i := 0
 	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
 		start, end := ops.iter.curr()
-		res[i] = DecodeStructure(data[start:end])
+		// Handle error from DecodeStructure, ignore for getter simplicity
+		opStruct, _ := DecodeStructure(data[start:end])
+		res[i] = opStruct
 	}
 	return res
 }
@@ -541,13 +553,19 @@ func (ops *OPSlice) Get() interface{} {
 		return utils.GetString(raw)
 
 	case VtSlice:
-		return DecodeSlice(raw)
+		// Handle error from DecodeSlice
+		opSlice, _ := DecodeSlice(raw) // Ignore error for simplicity in getter
+		return opSlice
 
 	case VtMap:
-		return DecodeMap(raw)
+		// Handle error from DecodeMap, ignore for getter simplicity
+		opMap, _ := DecodeMap(raw)
+		return opMap
 
 	case VtStructure:
-		return DecodeStructure(raw)
+		// Handle error from DecodeStructure, ignore for getter simplicity
+		opStruct, _ := DecodeStructure(raw)
+		return opStruct
 
 	default:
 	}
@@ -597,7 +615,8 @@ func (ops *OPSlice) String(prettify bool) string {
 			res += utils.GetString(raw)
 
 		case VtSlice:
-			opSlice := DecodeSlice(raw)
+			// Handle error from DecodeSlice
+			opSlice, _ := DecodeSlice(raw) // Ignore error for simplicity here
 			if opSlice != nil {
 				res += opSlice.String(prettify)
 			} else {
@@ -605,7 +624,8 @@ func (ops *OPSlice) String(prettify bool) string {
 			}
 
 		case VtMap:
-			opMap := DecodeMap(raw)
+			// Handle error from DecodeMap, ignore for String simplicity
+			opMap, _ := DecodeMap(raw)
 			if opMap != nil {
 				res += opMap.String(prettify)
 			} else {
@@ -613,7 +633,8 @@ func (ops *OPSlice) String(prettify bool) string {
 			}
 
 		case VtStructure:
-			opStr := DecodeStructure(raw)
+			// Handle error from DecodeStructure, ignore for String simplicity
+			opStr, _ := DecodeStructure(raw)
 			if opStr != nil {
 				res += opStr.String(prettify)
 			} else {
@@ -649,28 +670,32 @@ func (ops *OPSlice) String(prettify bool) string {
 	return res
 }
 
-// slice bytes:
+// slice 编码格式:
 /*
-    head:
-        element data len code	(1 byte)
-		element data len  		(variable-length bytes)
-    body:
-		element type    		(1 byte)
-		elements 	    		(variable-length bytes)
+    head: (头部)
+        body len code (1 byte)     	- body 部分长度的编码类型 (mpBin8/mpBin16/mpBin32)
+		body len      (variable) 	- body 部分的实际长度 (根据 code 决定占 1, 2, 或 4 字节)
+    body: (主体)
+		element type  (1 byte)     	- slice 中元素的统一 opio 数据类型 (Vt*)
+		elements      (variable) 	- 连续存放的元素数据
+			- 定长类型 (bool, int*, float*): 直接存放元素值
+			- 变长类型 (string, slice, map, struct): 存放每个元素的 opio 编码 (head + body)
 */
 
-func EncodeSlice(value interface{}) (int, []byte) {
+// EncodeSlice 将 Go 的 slice 或 array 编码为 opio slice 格式的字节流。
+// 返回值: headLen (头部长度), rawData (编码后的完整字节流), error (错误信息)
+func EncodeSlice(value interface{}) (int, []byte, error) {
 	if nil == value {
-		return 0, MakeEmptyBinary()
+		// 对于 nil 输入，返回空二进制和 nil 错误是合理的
+		// 假设 MakeEmptyBinary 返回 []byte
+		return 0, MakeEmptyBinary(), nil
 	}
 	rv := reflect.Indirect(reflect.ValueOf(value))
 
-	// fault return
+	// 类型检查
 	rvKind := rv.Kind()
 	if rvKind != reflect.Slice && rvKind != reflect.Array {
-		fmt.Println("value is not slice or array")
-		//logs.Error("value is not slice or array")
-		return 0, nil
+		return 0, nil, fmt.Errorf("EncodeSlice 错误: 输入值不是 slice 或 array, 类型为 %v", rvKind)
 	}
 
 	rt := rv.Type()
@@ -680,30 +705,34 @@ func EncodeSlice(value interface{}) (int, []byte) {
 
 	// 空数组或空切片
 	if 0 == eleNum {
-		return 0, MakeEmptyBinary()
+		// 假设 MakeEmptyBinary 返回 []byte
+		return 0, MakeEmptyBinary(), nil
 	}
 
 	dataType, ok := fixedTypeMap[eleKind]
 	if ok {
 		fixedLen, ok := fixedTypeLenMap[dataType]
 		if !ok {
-			// fault return
-			fmt.Println("unsupported slice data type:%v", eleKind)
-			//logs.Error("unsupported slice data type:%v", eleKind)
-			return 0, nil
+			// 不支持的定长类型
+			return 0, nil, fmt.Errorf("EncodeSlice 错误: 不支持的定长 slice 元素类型: %v", eleKind)
 		}
-		return putFixedSlice(rv, eleKind, eleNum, dataType, fixedLen)
+		// 处理定长类型 slice
+		headLen, rawData, err := putFixedSlice(rv, eleKind, eleNum, dataType, fixedLen)
+		return headLen, rawData, err // 直接返回 putFixedSlice 的结果
 	}
+
+	// 检查是否为支持的变长类型
 	dataType, ok = varTypeMap[eleKind]
 	if !ok {
-		fmt.Println("unsupported slice data type:%v", eleKind)
-		//logs.Error("unsupported slice data type:%v", eleKind)
-		return 0, nil
+		// 不支持的变长类型
+		return 0, nil, fmt.Errorf("EncodeSlice 错误: 不支持的变长 slice 元素类型: %v", eleKind)
 	}
-	return putVarSlice(rv, eleKind, eleNum, dataType)
+	// 处理变长类型 slice
+	headLen, rawData, err := putVarSlice(rv, eleKind, eleNum, dataType)
+	return headLen, rawData, err // 直接返回 putVarSlice 的结果
 }
 
-func putFixedSlice(rv reflect.Value, eleKind reflect.Kind, eleNum int, dataType, dataTypeLen int8) (int, []byte) {
+func putFixedSlice(rv reflect.Value, eleKind reflect.Kind, eleNum int, dataType, dataTypeLen int8) (int, []byte, error) {
 
 	fixedLen := int(dataTypeLen)
 
@@ -729,7 +758,7 @@ func putFixedSlice(rv reflect.Value, eleKind reflect.Kind, eleNum int, dataType,
 		rawData[2] = byte(bodyLen)
 
 	case bodyLen < 0x10000000:
-		headLen = 5
+		headLen = 5 // 移除行首多余的 'g'
 		rawData = make([]byte, headLen+bodyLen)
 		rawData[0] = mpBin32             // BODY长度编码
 		rawData[1] = byte(bodyLen >> 24) // BODY长度
@@ -738,9 +767,8 @@ func putFixedSlice(rv reflect.Value, eleKind reflect.Kind, eleNum int, dataType,
 		rawData[4] = byte(bodyLen)
 	}
 	if nil == rawData || 0 == headLen {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
-		//logs.Error("make head failed, bodyLen:%v", bodyLen)
-		return 0, nil
+		// 头部创建失败，通常是 bodyLen 过大或其他逻辑错误
+		return 0, nil, fmt.Errorf("putFixedSlice 错误: 创建头部失败, bodyLen:%v", bodyLen)
 	}
 
 	offset = headLen
@@ -797,49 +825,73 @@ func putFixedSlice(rv reflect.Value, eleKind reflect.Kind, eleNum int, dataType,
 		offset += fixedLen
 	}
 
-	return headLen, rawData
+	return headLen, rawData, nil
 }
 
-func putVarSlice(rv reflect.Value, eleKind reflect.Kind, eleNum int, dataType int8) (int, []byte) {
+func putVarSlice(rv reflect.Value, eleKind reflect.Kind, eleNum int, dataType int8) (int, []byte, error) {
 
 	bodyBuff := utils.MBuffer{}
 
 	// 元素类型
 	_, _ = bodyBuff.Write([]byte{byte(dataType)})
 
-	var raw []byte = nil
+	var raw []byte
+	var err error
+	var headLen int
 
 	for i := 0; i < eleNum; i++ {
 		val := rv.Index(i)
+		// 重置循环变量
+		raw = nil
+		err = nil
+		headLen = 0
+
+		// 在 switch 内部处理错误并检查
 		switch eleKind {
 		case reflect.String:
 			_, raw = utils.PutString(val.String())
+			// err 保持 nil
 
-		case reflect.Array:
-			fallthrough
-		case reflect.Slice:
-			_, raw = EncodeSlice(val.Interface())
+		case reflect.Array, reflect.Slice: // 合并 Array 和 Slice
+			headLen, raw, err = EncodeSlice(val.Interface())
+			if err != nil { // 在 case 内部检查错误
+				return 0, nil, fmt.Errorf("putVarSlice error: encoding element %d (type %v): %w", i, eleKind, err)
+			}
 
 		case reflect.Map:
-			_, raw = EncodeMap(val.Interface())
+			headLen, raw, err = EncodeMap(val.Interface())
+			if err != nil { // 在 case 内部检查错误
+				return 0, nil, fmt.Errorf("putVarSlice error: encoding element %d (type %v): %w", i, eleKind, err)
+			}
 
 		case reflect.Struct:
-			_, raw = EncodeStructure(val.Interface())
+			headLen, raw, err = EncodeStructure(val.Interface())
+			if err != nil { // 在 case 内部检查错误
+				return 0, nil, fmt.Errorf("putVarSlice error: encoding element %d (type %v): %w", i, eleKind, err)
+			}
+		default:
+			// 不应到达这里，因为 EncodeSlice 已经做了类型检查
+			return 0, nil, fmt.Errorf("putVarSlice internal error: unsupported element kind %v at index %d", eleKind, i)
 		}
-		rawLen := len(raw)
 
-		if 0 == rawLen {
-			fmt.Println("data was damaged")
-			//logs.Error("data was damaged")
-			return 0, nil
+		// 如果 switch 没有因错误返回，则 err 应该为 nil (或来自 PutString 的隐式 nil)
+		// 检查 raw 是否为 nil (异常情况)
+		if raw == nil {
+			// 这表示 EncodeSlice/Map/Structure 或 PutString 返回了 nil, nil
+			// 对于有效输入（即使是空集合），它们应该返回非 nil 的字节表示（例如 MakeEmptyBinary 的结果）
+			return 0, nil, fmt.Errorf("putVarSlice internal error: element %d (type %v) encoded successfully but resulted in nil data", i, eleKind)
 		}
-		_, _ = bodyBuff.Write(raw)
 
-		raw = nil
+		// 将编码后的数据写入缓冲区
+		_, writeErr := bodyBuff.Write(raw)
+		if writeErr != nil {
+			// 处理写入 bodyBuff 时的错误
+			return 0, nil, fmt.Errorf("putVarSlice error: writing element %d to buffer: %w", i, writeErr)
+		}
 	}
 	// write head and body
-	var rawData []byte = nil
-	headLen := 0
+	var rawData []byte // 显式声明 rawData
+	headLen = 0        // 使用 = 赋值，而不是 := 重新声明
 	bodyLen := bodyBuff.Len()
 
 	switch {
@@ -866,21 +918,24 @@ func putVarSlice(rv reflect.Value, eleKind reflect.Kind, eleNum int, dataType in
 		rawData[4] = byte(bodyLen)
 	}
 	if 0 == headLen || 0 == len(rawData) {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
-		//logs.Error("make head failed, bodyLen:%v", bodyLen)
+		// 头部创建失败
+		return 0, nil, fmt.Errorf("putVarSlice 错误: 创建头部失败, bodyLen:%v", bodyLen)
 	}
 
 	copy(rawData[headLen:], bodyBuff.Bytes())
 
-	return headLen, rawData
+	return headLen, rawData, nil
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-
-func DecodeSlice(src []byte) *OPSlice {
+// DecodeSlice 将 opio slice 格式的字节流解码为 OPSlice 对象。
+// src: 包含 opio slice 编码的字节流 (head + body)。
+// 返回值: *OPSlice (解码后的对象), error (错误信息)
+func DecodeSlice(src []byte) (*OPSlice, error) {
 	// 对空值做处理
+	// 假设 IsEmptyBinary 返回 bool
 	if IsEmptyBinary(src) {
-		return nil
+		// 对于空二进制，返回 nil 对象和 nil 错误是合理的
+		return nil, nil
 	}
 
 	srcLen := len(src)
@@ -889,22 +944,33 @@ func DecodeSlice(src []byte) *OPSlice {
 	data := make([]byte, srcLen)
 	copy(data, src)
 
-	// new OPSlice
+	// 创建 OPSlice 对象
 	res := &OPSlice{}
-	res.SetData(data) // SetData会将head和body分析出来
+	// SetData 会解析头部信息 (headLen, bodyLen) 并设置内部数据引用
+	// 注意：假设 utils.BytesBase.SetData 不返回错误。如果它可能失败，需要调整。
+	res.SetData(data)
 
-	// 取元素类型
+	// 获取头部长度，计算 body 的起始偏移量
 	offset := res.GetHeadLen()
-	dataType := int8(src[offset])
+	if offset >= srcLen {
+		return nil, fmt.Errorf("DecodeSlice 错误: 头部长度 (%d) 超出总长度 (%d)", offset, srcLen)
+	}
+	// 读取 body 的第一个字节：元素类型
+	dataType := int8(data[offset])
 	offset++
 
 	// set element data type
 	res.eleType = dataType
 
+	// 检查 body 长度是否至少包含元素类型字节
 	bodyLen := res.GetBodyLen()
+	if bodyLen < minSliceBodyLen {
+		return nil, fmt.Errorf("DecodeSlice 错误: body 长度 (%d) 小于最小长度 (%d)", bodyLen, minSliceBodyLen)
+	}
+	// 如果 body 长度正好等于最小长度，说明 slice 为空（只有类型信息）
 	if minSliceBodyLen == bodyLen {
-		// 说明数据是空的，只有一个数据类型
-		return res
+		// 空 slice，迭代器为 nil
+		return res, nil
 	}
 
 	// 真正的数据起始位置
@@ -929,28 +995,57 @@ func DecodeSlice(src []byte) *OPSlice {
 
 			lenCode := uint8(data[offset])
 			offset++
-			eleHeadLen++
+			eleHeadLen++ // 计入长度编码字节
+
+			// 检查偏移量是否越界 (读取 lenCode 后)
+			if offset >= srcLen {
+				return nil, fmt.Errorf("DecodeSlice 错误: 解析变长元素头部时偏移量 (%d) 越界 (总长 %d)", offset, srcLen)
+			}
 
 			switch lenCode {
 			case mpBin8:
+				// 检查读取 body 长度是否越界
+				if offset+1 > srcLen {
+					return nil, fmt.Errorf("DecodeSlice 错误: 读取 mpBin8 长度时偏移量 (%d) 越界 (总长 %d)", offset, srcLen)
+				}
 				eleBodyLen = int(data[offset])
 				offset++
-				eleHeadLen++
+				eleHeadLen++ // 计入 body 长度字节
 
 			case mpBin16:
+				// 检查读取 body 长度是否越界
+				if offset+2 > srcLen {
+					return nil, fmt.Errorf("DecodeSlice 错误: 读取 mpBin16 长度时偏移量 (%d) 越界 (总长 %d)", offset, srcLen)
+				}
 				eleBodyLen = int(data[offset])<<8 | int(data[offset+1])
 				offset += 2
-				eleHeadLen += 2
+				eleHeadLen += 2 // 计入 body 长度字节
 
 			case mpBin32:
+				// 检查读取 body 长度是否越界
+				if offset+4 > srcLen {
+					return nil, fmt.Errorf("DecodeSlice 错误: 读取 mpBin32 长度时偏移量 (%d) 越界 (总长 %d)", offset, srcLen)
+				}
 				eleBodyLen = int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
 				offset += 4
-				eleHeadLen += 4
+				eleHeadLen += 4 // 计入 body 长度字节
+			default:
+				// 无效的长度编码
+				return nil, fmt.Errorf("DecodeSlice 错误: 无效的变长元素长度编码: %x", lenCode)
 			}
+
+			// 检查 body 是否越界
+			if offset+eleBodyLen > srcLen {
+				return nil, fmt.Errorf("DecodeSlice 错误: 元素 body 越界 (offset=%d, bodyLen=%d, srcLen=%d)", offset, eleBodyLen, srcLen)
+			}
+
+			// 记录当前元素的总长度 (head + body)
 			posList = append(posList, eleHeadLen+eleBodyLen)
+			// 移动偏移量到下一个元素的开始位置
 			offset += eleBodyLen
 		}
+		// 创建变长迭代器
 		res.iter = newVarByteIterator(posList, dataStart, srcLen)
 	}
-	return res
+	return res, nil
 }

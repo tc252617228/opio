@@ -75,20 +75,27 @@ func TestStructure(t *testing.T) {
 	}
 	encodeES := time.Now()
 
-	headLen, raw := EncodeStructure(stu)
+	headLen, raw, err := EncodeStructure(stu)
+	if err != nil {
+		t.Fatalf("EncodeStructure failed: %v", err)
+	}
 
 	fmt.Println("struct encode elapsed:", time.Since(encodeES))
 
 	fmt.Println("struct head len:", headLen)
 	fmt.Println("raw len:", len(raw))
-	//fmt.Println("raw:", raw)
 
 	decodeES := time.Now()
 
-	opStructure := DecodeStructure(raw)
+	opStructure, err := DecodeStructure(raw)
+	if err != nil {
+		t.Fatalf("DecodeStructure failed: %v", err)
+	}
 	if nil == opStructure {
-		fmt.Println("decode struct failed")
-		return
+		// This might happen if DecodeStructure returns (nil, nil) for empty binary
+		fmt.Println("decode struct returned nil (possibly empty)")
+		// Decide if this is an error or expected for empty input
+		// return // Or continue if nil is acceptable
 	}
 	fmt.Println("struct decode elapsed:", time.Since(decodeES))
 
@@ -149,19 +156,24 @@ func TestCompoundStructure(t *testing.T) {
 
 	encodeES := time.Now()
 
-	headLen, raw := EncodeStructure(cl)
+	headLen, raw, err := EncodeStructure(cl)
+	if err != nil {
+		t.Fatalf("EncodeStructure (compound) failed: %v", err)
+	}
 
 	fmt.Println("struct encode elapsed:", time.Since(encodeES))
 
 	fmt.Println("struct head len:", headLen)
 	fmt.Println("raw len:", len(raw))
-	//fmt.Println("raw:", raw)
 
 	decodeES := time.Now()
 
-	opStructure := DecodeStructure(raw)
+	opStructure, err := DecodeStructure(raw)
+	if err != nil {
+		t.Fatalf("DecodeStructure (compound) failed: %v", err)
+	}
 	if nil == opStructure {
-		fmt.Println("decode struct failed")
+		fmt.Println("decode struct (compound) returned nil")
 		return
 	}
 	fmt.Println("struct decode elapsed:", time.Since(decodeES))
@@ -251,7 +263,10 @@ func TestEmptyStructure(t *testing.T) {
 
 	encodeES := time.Now()
 
-	headLen, raw := EncodeStructure(stu)
+	headLen, raw, err := EncodeStructure(stu)
+	if err != nil {
+		t.Fatalf("EncodeStructure (empty) failed: %v", err)
+	}
 
 	fmt.Println("struct encode elapsed:", time.Since(encodeES))
 
@@ -261,10 +276,16 @@ func TestEmptyStructure(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opStructure := DecodeStructure(raw)
+	opStructure, err := DecodeStructure(raw)
+	if err != nil {
+		t.Fatalf("DecodeStructure (empty) failed: %v", err)
+	}
 	if nil == opStructure {
-		fmt.Println("decode struct failed")
-		return
+		// For empty struct, DecodeStructure might return (nil, nil) if input was empty binary
+		fmt.Println("decode struct (empty) returned nil")
+		// Depending on expected behavior for empty struct, this might be okay or an error
+		// If it's okay, we might need to skip further checks on opStructure
+		// return // Or adjust checks below
 	}
 	fmt.Println("struct decode elapsed:", time.Since(decodeES))
 

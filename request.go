@@ -2,8 +2,6 @@ package opio
 
 import (
 	"errors"
-	"fmt"
-	"runtime/debug"
 	"strconv"
 	"sync"
 
@@ -345,7 +343,8 @@ func (req *Request) GetDataSet() (table *OPDataSet) {
 	return req.dataSet
 }
 
-func (req *Request) write() error {
+// Renamed from write to Write
+func (req *Request) Write() error {
 	req.Lock()
 	defer req.Unlock()
 	var err error
@@ -356,17 +355,15 @@ func (req *Request) write() error {
 	if v, ok := req.props[PropTable]; ok {
 		err = io.EncodeString(PropTable)
 		if err != nil {
-			fmt.Println("key:", PropTable, "value: ", v, "err:", err)
+			// 移除调试打印
 			//logs.Warn("key:", PropTable, "value: ", v, "err:", err)
-			fmt.Println(string(debug.Stack()))
 			//logs.Warn(string(debug.Stack()))
 			return err
 		}
 		err = req.buff.EncodeValue(v)
 		if err != nil {
-			fmt.Println("key:", PropTable, "value: ", v, "err:", err)
+			// 移除调试打印
 			//logs.Warn("key:", PropTable, "value: ", v, "err:", err)
-			fmt.Println(string(debug.Stack()))
 			//logs.Warn(string(debug.Stack()))
 			return err
 		}
@@ -392,44 +389,48 @@ func (req *Request) write() error {
 				err = req.buff.EncodeValue(v)
 			}
 		}
+		// err = req.buff.EncodeValue(v) // 移除导致语法错误的冗余行
 		if err != nil {
-			fmt.Println(string(debug.Stack()))
+			// 移除调试打印
 			//logs.Error(string(debug.Stack()))
-			fmt.Println("key:", key, "value: ", v, "err:", err)
 			//logs.Error("key:", key, "value: ", v, "err:", err)
-			break
+			break // 保留 break 以便在出错时退出循环
 		}
 	}
+	// Removed extra closing brace
 
 	return err
 }
 
-// write -
-func (req *Request) Write() error {
-	return req.write()
-}
+// write - (Removed wrapper as write is now public Write)
+// func (req *Request) Write() error {
+// 	return req.write()
+// }
 
-// WriteContent -
+// WriteContent - (Renamed from private writeContent)
 func (req *Request) WriteContent(data *Table) error {
 	err := req.buff.EncodeArrayStart(uint32(data.rowCount))
 	if err != nil {
-		fmt.Println("WriteContent EncodeArrayStart", err)
+		// 移除调试打印
 		//logs.Error(" WriteContent EncodeArrayStart", err)
+		// Consider returning the error here? For now, just remove print.
 	}
 
 	for _, v := range data.rows {
 		size := uint32(len(v.Data))
-		err := req.buff.EncodeExtendLen(size, VtRow)
-		if err != nil {
-			fmt.Println("WriteContent EncodeExtendLen", err)
-			//logs.Error(" WriteContent EncodeExtendLen", err)
-			return err
+		var errExtend error // Use a different variable name to avoid shadowing
+		errExtend = req.buff.EncodeExtendLen(size, VtRow)
+		if errExtend != nil {
+			// 移除调试打印
+			//logs.Error(" WriteContent EncodeExtendLen", errExtend)
+			return errExtend // Return the specific error
 		}
-		err = req.buff.PutBytes(v.Data)
-		if err != nil {
-			fmt.Println("WriteContent PutBytes", err)
-			//logs.Error("WriteContent PutBytes ", err)
-			return err
+		var errPut error // Use a different variable name
+		errPut = req.buff.PutBytes(v.Data)
+		if errPut != nil {
+			// 移除调试打印
+			//logs.Error("WriteContent PutBytes ", errPut)
+			return errPut // Return the specific error
 		}
 	}
 	return nil
@@ -443,7 +444,7 @@ func (req *Request) Flush() {
 
 // WriteAndFlush -
 func (req *Request) WriteAndFlush() error {
-	err := req.write()
+	err := req.Write() // 更新调用为公共方法 Write
 	if err != nil {
 		return err
 	}

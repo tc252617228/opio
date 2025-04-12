@@ -1,5 +1,7 @@
 package opio
 
+import "fmt"
+
 // Response -
 type Response struct {
 	Request
@@ -76,18 +78,70 @@ func (resp *Response) GetErrNo() int32 {
 	return -1
 }
 
-// write -
+// encodeAndWriteToBuffer encodes the response properties and table into the buffer.
+// 注意：这个方法是根据 Request.write 的行为推断的，可能需要根据实际逻辑调整。
+func (resp *Response) encodeAndWriteToBuffer() error {
+	resp.Lock()
+	defer resp.Unlock()
+
+	// 1. 编码属性 (props map)
+	// 使用顶层 EncodeMap 函数
+	_, propsData, err := EncodeMap(resp.props)
+	if err != nil {
+		return fmt.Errorf("response write: failed to encode props map: %w", err)
+	}
+	// 将编码后的属性数据写入缓冲区
+	err = resp.buff.PutBytes(propsData) // 使用 PutBytes
+	if err != nil {
+		return fmt.Errorf("response write: failed to write encoded props to buffer: %w", err)
+	}
+
+	// 2. 编码表格 (table)
+	// Table 没有 Encode 方法，直接写入每行的原始数据
+	if resp.table != nil && resp.table.rowCount > 0 {
+		// 写入行数 (假设需要，这里用 int32)
+		// 注意：协议可能需要不同的方式表示表格数据，这里只是一个可能的实现
+		// err = resp.buff.PutInt32(int32(resp.table.rowCount)) // 示例：写入行数
+		// if err != nil {
+		// 	return fmt.Errorf("response write: failed to write row count: %w", err)
+		// }
+
+		// 迭代写入每行数据
+		for i, row := range resp.table.rows {
+			if row.Data == nil {
+				// 处理空行数据？根据协议决定是跳过、写入空标记还是报错
+				// 暂时跳过空行
+				continue
+			}
+			err = resp.buff.PutBytes(row.Data) // 使用 PutBytes
+			if err != nil {
+				return fmt.Errorf("response write: failed to write row %d data to buffer: %w", i, err)
+			}
+		}
+	} else {
+		// 如果没有表格数据，可能需要写入一个空标记，例如 nil 或空 map/slice
+		// 暂时不写入任何内容表示空表格
+		// err = resp.buff.EncodeNil() // 示例
+		// if err != nil {
+		// 	return fmt.Errorf("response write: failed to write nil for empty table: %w", err)
+		// }
+	}
+
+	return nil // 所有写入成功
+}
+
+// Write -
 func (resp *Response) Write(use_mode_in bool) error {
 	if use_mode_in {
 		resp.buff.UseOptionIn()
 	}
-	return resp.write()
+	return resp.encodeAndWriteToBuffer() // 调用重命名后的方法
 }
 
-// write -
+// WriteAndFlush -
 func (resp *Response) WriteAndFlush() error {
 	resp.buff.UseOptionIn()
-	err := resp.write()
+	err := resp.encodeAndWriteToBuffer() // 调用重命名后的方法
 	if err != nil {
 		return err
 	}

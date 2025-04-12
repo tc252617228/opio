@@ -277,19 +277,6 @@ var (
 	}
 )
 
-// get status const header
-var (
-	statusHeader = []byte{
-		0x10, 0x20, 0x30, 0x40,
-		0, 0, 0, 110,
-		0x46, 0, 0, 0,
-		0, 0, 0, 0,
-		0, 0, 0, 0,
-		0xA5, //will come back
-		0x10, 0x20, 0x30, 0x40,
-	}
-)
-
 // msgpack
 const (
 	mpBin8  = 0xc4

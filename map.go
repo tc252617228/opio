@@ -9,14 +9,14 @@ import (
 )
 
 const (
-	minMapBodyLen = 2 // body中只包含keyType和valType
+	minMapBodyLen = 2 // body 中只包含 keyType 和 valType
 )
 
 type OPMap struct {
 	utils.BytesBase
-	keyType int8   // key的类型 , see "Value type" in environment/opio/driver/const.go
-	valType int8   // value的类型 , see "Value type" in environment/opio/driver/const.go
-	pair    OPPair // key记录器
+	keyType int8   // key 的类型, 参考 environment/opio/driver/const.go 中的 "Value type"
+	valType int8   // value 的类型, 参考 environment/opio/driver/const.go 中的 "Value type"
+	pair    OPPair // key-value 对记录器
 }
 
 func (opm *OPMap) GetKeyType() int8 {
@@ -98,6 +98,7 @@ func (opm *OPMap) FindMap(key interface{}) *OPMap {
 	if opm.IsEmpty() {
 		return nil
 	}
+	// opm.pair.GetMap currently returns *OPMap (will be updated later in pair.go)
 	return opm.pair.GetMap(key)
 }
 
@@ -105,6 +106,7 @@ func (opm *OPMap) FindStructure(key interface{}) *OPStructure {
 	if opm.IsEmpty() {
 		return nil
 	}
+	// opm.pair.GetStructure currently returns *OPStructure (will be updated later in pair.go)
 	return opm.pair.GetStructure(key)
 }
 
@@ -143,13 +145,16 @@ func (opm *OPMap) Find(key interface{}) interface{} {
 		return pair.GetString(key)
 
 	case VtSlice:
+		// GetSlice already handles DecodeSlice error internally, returning *OPSlice
 		return pair.GetSlice(key)
 
 	case VtMap:
-		return pair.GetMap(key)
+		// GetMap will be modified to handle DecodeMap error internally, returning *OPMap
+		return pair.GetMap(key) // Keep as is for now
 
 	case VtStructure:
-		return pair.GetStructure(key)
+		// GetStructure will be modified to handle DecodeStructure error internally, returning *OPStructure
+		return pair.GetStructure(key) // Keep as is for now
 
 	default:
 	}
@@ -210,17 +215,20 @@ func (opm *OPMap) Range(f func(key, value interface{}) bool) {
 				break
 			}
 		case VtSlice:
+			// GetSlice already handles DecodeSlice error internally
 			if !f(dataKey, pair.GetSlice(dataKey)) {
 				breakLoop = true
 				break
 			}
 		case VtMap:
-			if !f(dataKey, pair.GetMap(dataKey)) {
+			// GetMap will handle DecodeMap error internally
+			if !f(dataKey, pair.GetMap(dataKey)) { // Keep as is for now
 				breakLoop = true
 				break
 			}
 		case VtStructure:
-			if !f(dataKey, pair.GetStructure(dataKey)) {
+			// GetStructure will handle DecodeStructure error internally
+			if !f(dataKey, pair.GetStructure(dataKey)) { // Keep as is for now
 				breakLoop = true
 				break
 			}
@@ -304,27 +312,30 @@ func (opm *OPMap) String(prettify bool) string {
 			res += pair.GetString(dataKey)
 
 		case VtSlice:
+			// GetSlice already handles DecodeSlice error internally
 			opSlice := pair.GetSlice(dataKey)
 			if opSlice != nil {
 				res += opSlice.String(prettify)
 			} else {
-				res += "nil"
+				res += "nil" // Or indicate error if GetSlice returned nil due to error
 			}
 
 		case VtMap:
-			opMap := pair.GetMap(dataKey)
+			// GetMap will handle DecodeMap error internally
+			opMap := pair.GetMap(dataKey) // Keep as is for now
 			if opMap != nil {
 				res += opMap.String(prettify)
 			} else {
-				res += "nil"
+				res += "nil" // Or indicate error
 			}
 
 		case VtStructure:
-			opStr := pair.GetStructure(dataKey)
+			// GetStructure will handle DecodeStructure error internally
+			opStr := pair.GetStructure(dataKey) // Keep as is for now
 			if opStr != nil {
 				res += opStr.String(prettify)
 			} else {
-				res += "nil"
+				res += "nil" // Or indicate error
 			}
 
 		default:
@@ -354,56 +365,58 @@ func (opm *OPMap) String(prettify bool) string {
 		data 			(variable-length bytes)
 */
 
-func EncodeMap(value interface{}) (int, []byte) {
-	// fault return
+// EncodeMap encodes a Go map into opio map format bytes.
+// Returns headLen, rawData, error.
+func EncodeMap(value interface{}) (int, []byte, error) {
 	if nil == value {
-		return 0, MakeEmptyBinary()
+		// Return empty binary for nil input
+		return 0, MakeEmptyBinary(), nil
 	}
 	rv := reflect.Indirect(reflect.ValueOf(value))
 
-	// fault return
+	// Check if the input is a map
 	rvKind := rv.Kind()
 	if rvKind != reflect.Map {
-		fmt.Println("map value is not map, valueType:%v", rvKind)
-		//logs.Error("map value is not map, valueType:%v", rvKind)
-		return 0, nil
+		return 0, nil, fmt.Errorf("EncodeMap: input value is not a map, type is %v", rvKind)
 	}
 
-	// make sure key and value type
+	// Determine key and value types
 	rt := rv.Type()
 	keyKind := rt.Key().Kind()
 	valKind := rt.Elem().Kind()
 
 	mapKeys := rv.MapKeys()
 	if 0 == len(mapKeys) {
-		return 0, MakeEmptyBinary()
+		// Return empty binary for empty map
+		return 0, MakeEmptyBinary(), nil
 	}
 
-	// 检查key的类型是否是内置类型,OPMap的key只支持内部数据类型
+	// Check if key type is supported
 	keyType, ok := opMapKeyTypeMap[keyKind]
 	if !ok {
-		fmt.Println("unsupported map key type:%v", keyKind)
-		//logs.Error("unsupported map key type:%v", keyKind)
-		return 0, nil
+		return 0, nil, fmt.Errorf("EncodeMap: unsupported map key type: %v", keyKind)
 	}
+	// Bool keys are not supported
 	if VtBool == keyType {
-		fmt.Println("unsupported bool key type")
-		//logs.Error("unsupported bool key type")
-		return 0, nil
+		return 0, nil, fmt.Errorf("EncodeMap: bool type key is not supported")
 	}
+	// Check if value type is supported
 	valType, ok := wholeReflectTypeMap[valKind]
 	if !ok {
-		fmt.Println("unsupported map value type:%v", valKind)
-		//logs.Error("unsupported map value type:%v", valKind)
-		return 0, nil
+		return 0, nil, fmt.Errorf("EncodeMap: unsupported map value type: %v", valKind)
 	}
+
 	bodyBuff := utils.MBuffer{}
 
-	_, _ = bodyBuff.Write([]byte{byte(keyType)}) // KEY类型
-	_, _ = bodyBuff.Write([]byte{byte(valType)}) // VALUE类型
+	_, _ = bodyBuff.Write([]byte{byte(keyType)}) // Write KEY type
+	_, _ = bodyBuff.Write([]byte{byte(valType)}) // Write VALUE type
+
+	var raw []byte
+	var err error
+	var headLen int // To receive headLen from Encode* calls
 
 	for _, kVal := range mapKeys {
-		// append key value
+		// Append key
 		switch keyKind {
 		case reflect.Int8:
 			_, _ = bodyBuff.Write(utils.Int8ToByte(int8(kVal.Int())))
@@ -440,12 +453,15 @@ func EncodeMap(value interface{}) (int, []byte) {
 			_, _ = bodyBuff.Write(utils.Float64ToByte(kVal.Float()))
 
 		case reflect.String:
-			_, raw := utils.PutString(kVal.String())
+			_, raw = utils.PutString(kVal.String()) // PutString returns (int, []byte)
 			_, _ = bodyBuff.Write(raw)
 		}
 
-		// append key value
+		// Append value
 		val := rv.MapIndex(kVal)
+		raw = nil // Reset raw before encoding value
+		err = nil // Reset err
+
 		switch valKind {
 		case reflect.Int8:
 			_, _ = bodyBuff.Write(utils.Int8ToByte(int8(val.Int())))
@@ -482,72 +498,96 @@ func EncodeMap(value interface{}) (int, []byte) {
 			_, _ = bodyBuff.Write(utils.Float64ToByte(val.Float()))
 
 		case reflect.String:
-			_, raw := utils.PutString(val.String())
+			_, raw = utils.PutString(val.String()) // PutString returns (int, []byte)
 			_, _ = bodyBuff.Write(raw)
 
 		case reflect.Array:
 			fallthrough
 		case reflect.Slice:
-			_, raw := EncodeSlice(val.Interface())
+			headLen, raw, err = EncodeSlice(val.Interface()) // Now returns error
+			if err != nil {
+				return 0, nil, fmt.Errorf("EncodeMap: encoding slice value for key %v failed: %w", kVal, err)
+			}
 			_, _ = bodyBuff.Write(raw)
 
 		case reflect.Map:
-			_, raw := EncodeMap(val.Interface())
+			// Recursive call, handle error
+			var tmpHeadLen int
+			var tmpRaw []byte
+			var tmpErr error
+			tmpHeadLen, tmpRaw, tmpErr = EncodeMap(val.Interface())
+			// 恢复为 =，因为 := 是不正确的
+			headLen, raw, err = tmpHeadLen, tmpRaw, tmpErr // Assign back to loop variables
+			if err != nil {
+				return 0, nil, fmt.Errorf("EncodeMap: encoding map value for key %v failed: %w", kVal, err)
+			}
 			_, _ = bodyBuff.Write(raw)
-
 		case reflect.Struct:
-			_, raw := EncodeStructure(val.Interface())
+			// EncodeStructure now returns (int, []byte, error). Handle the error.
+			// Use temporary variables inside case block.
+			var tmpHeadLen int
+			var tmpRaw []byte
+			var tmpErr error
+			tmpHeadLen, tmpRaw, tmpErr = EncodeStructure(val.Interface())
+			headLen, raw, err = tmpHeadLen, tmpRaw, tmpErr // Assign back to loop variables
+
+			if err != nil {
+				return 0, nil, fmt.Errorf("EncodeMap: encoding struct value for key %v failed: %w", kVal, err)
+			}
 			_, _ = bodyBuff.Write(raw)
 		}
 	}
 
-	// write head and body
+	// Write head and body
 	var rawData []byte = nil
-	headLen := 0
+	// 使用外部声明的 headLen，而不是重新声明
+	headLen = 0
 	bodyLen := bodyBuff.Len()
 
 	switch {
 	case bodyLen < 0x100:
 		headLen = 2
 		rawData = make([]byte, headLen+bodyLen)
-		rawData[0] = mpBin8        // BODY长度编码
-		rawData[1] = byte(bodyLen) // BODY长度
+		rawData[0] = mpBin8        // BODY 长度编码 (1 byte)
+		rawData[1] = byte(bodyLen) // BODY 长度
 
 	case bodyLen < 0x10000:
 		headLen = 3
 		rawData = make([]byte, headLen+bodyLen)
-		rawData[0] = mpBin16            // BODY长度编码
-		rawData[1] = byte(bodyLen >> 8) // BODY长度
+		rawData[0] = mpBin16            // BODY 长度编码 (2 bytes)
+		rawData[1] = byte(bodyLen >> 8) // BODY 长度
 		rawData[2] = byte(bodyLen)
 
 	case bodyLen < 0x10000000:
 		headLen = 5
 		rawData = make([]byte, headLen+bodyLen)
-		rawData[0] = mpBin32             // BODY长度编码
-		rawData[1] = byte(bodyLen >> 24) // BODY长度
+		rawData[0] = mpBin32             // BODY 长度编码 (4 bytes)
+		rawData[1] = byte(bodyLen >> 24) // BODY 长度
 		rawData[2] = byte(bodyLen >> 16)
 		rawData[3] = byte(bodyLen >> 8)
 		rawData[4] = byte(bodyLen)
 	}
-	if 0 == headLen {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
-		//logs.Error("make head failed, bodyLen:%v", bodyLen)
+	if 0 == headLen || rawData == nil {
+		// Head creation failed
+		return 0, nil, fmt.Errorf("EncodeMap: failed to create head, bodyLen:%v", bodyLen)
 	}
 
 	copy(rawData[headLen:], bodyBuff.Bytes())
 
-	return headLen, rawData
+	return headLen, rawData, nil
 }
 
-func DecodeMap(src []byte) *OPMap {
-	// 对空值进行判断
+// DecodeMap decodes opio map format bytes into an OPMap object.
+// Returns *OPMap, error.
+func DecodeMap(src []byte) (*OPMap, error) {
+	// Handle empty binary
 	if IsEmptyBinary(src) {
-		return nil
+		return nil, nil // Return nil object and nil error for empty binary
 	}
 
 	srcLen := len(src)
 
-	// 全数据copy
+	// 复制全部数据
 	data := make([]byte, srcLen)
 	copy(data, src)
 
@@ -556,28 +596,29 @@ func DecodeMap(src []byte) *OPMap {
 
 	offset := res.GetHeadLen()
 
-	// 取KEY类型
+	// Get KEY type
 	keyType := int8(src[offset])
-	// 取VALUE类型
+	// Get VALUE type
 	valType := int8(src[offset+1])
-	// 向前移动两个字节
+	// Move offset past keyType and valType
 	offset += 2
 
-	// set
+	// Set types in result object
 	res.keyType = keyType
 	res.valType = valType
 
 	bodyLen := res.GetBodyLen()
+	// If body only contains type info, it's an empty map
 	if minMapBodyLen == bodyLen {
-		return res
+		return res, nil
 	}
 
-	// 数据起始位置
+	// Data body start position
 	dataStart := offset
 
 	var pair OPPair = nil
 
-	// 解析出Key和其对应value在data中的位置
+	// 根据 key 类型解析出 Key 和其对应 value 在 data 中的位置
 	switch keyType {
 	case VtInt8:
 		fallthrough
@@ -597,10 +638,8 @@ func DecodeMap(src []byte) *OPMap {
 		pair = newOPStringPair(data, keyType, valType, dataStart)
 	}
 	if nil == pair {
-		fmt.Println("init map pair failed, keyType:%v", keyType)
-		//logs.Error("init map pair failed, keyType:%v", keyType)
-		return nil
+		return nil, fmt.Errorf("DecodeMap: failed to initialize map pair, keyType:%v", keyType)
 	}
 	res.pair = pair
-	return res
+	return res, nil
 }

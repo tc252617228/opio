@@ -4,12 +4,56 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"     // 用于日志记录
 	"reflect" // 导入反射包
 	"strconv" // 导入字符串转换包
 	"strings" // 导入字符串处理包
 	"time"
+
+	"encoding/json" // 用于 JSON 处理 (Scan TODO)
 	// "github.com/tc252617228/opio/internal/utils" // 可能需要内部工具包
 )
+
+// ====================================================================================
+// Custom Error Types
+// ====================================================================================
+
+var (
+	// ErrConnectionClosed 表示操作尝试在已关闭的客户端连接上执行。
+	ErrConnectionClosed = errors.New("opio: client connection is closed")
+	// ErrTimeout 表示操作因超时而失败 (通常由 context 控制)。
+	ErrTimeout = errors.New("opio: operation timed out")
+	// ErrOpioServer 表示 OpenPlant 服务器返回了一个错误。
+	// 可以通过 errors.As 来检查底层错误详情。
+	ErrOpioServer = errors.New("opio: server returned an error")
+	// ErrUnsupportedIDType 表示 DeleteByID 或类似函数收到了不支持的 ID 类型。
+	ErrUnsupportedIDType = errors.New("opio: unsupported ID type")
+	// ErrScanTargetInvalid 表示 Scan 方法的目标参数无效 (非指针、nil 指针、非指向切片等)。
+	ErrScanTargetInvalid = errors.New("opio: Scan target must be a non-nil pointer to a slice")
+	// ErrScanElementInvalid 表示 Scan 方法的目标切片元素不是结构体。
+	ErrScanElementInvalid = errors.New("opio: Scan target slice element must be a struct")
+	// ErrUpdateRequiresFilters 表示 UpdateStruct 或类似更新操作需要提供过滤条件。
+	ErrUpdateRequiresFilters = errors.New("opio: update operation requires filters")
+	// ErrNoFieldsToUpdate 表示更新操作没有找到可更新的字段。
+	ErrNoFieldsToUpdate = errors.New("opio: no fields found to update")
+	// ErrSubscriptionClosed 表示尝试在已关闭的订阅上执行操作。
+	ErrSubscriptionClosed = errors.New("opio: subscription is closed")
+)
+
+// OpioServerError 包装了从服务器接收到的具体错误信息。
+type OpioServerError struct {
+	Code    int32
+	Message string
+}
+
+func (e *OpioServerError) Error() string {
+	return fmt.Sprintf("opio: server error %d: %s", e.Code, e.Message)
+}
+
+// Unwrap 返回底层错误，允许使用 errors.Is(err, ErrOpioServer)。
+func (e *OpioServerError) Unwrap() error {
+	return ErrOpioServer
+}
 
 // ====================================================================================
 // Client Definition and Basic Operations
@@ -18,9 +62,30 @@ import (
 // Client 代表与 OpenPlant 服务的连接，封装了底层操作。
 // 它提供了 V2 风格的通用 CRUD、V3 风格的时序数据操作、SQL 执行和实时数据订阅功能。
 type Client struct {
-	conn            *IOConnect // 底层连接对象
-	compressionMode byte       // 当前连接的压缩模式
-	// 可以添加其他配置选项，例如日志记录器等
+	conn            *IOConnect    // 底层连接对象
+	compressionMode byte          // 当前连接的压缩模式
+	Logger          *log.Logger   // 可选的日志记录器
+	defaultTimeout  time.Duration // 默认请求超时 (如果 context 没有设置)
+}
+
+// SetDefaultTimeout 设置客户端操作的默认超时时间。
+// 如果传递给操作方法的 context 没有设置截止时间 (deadline)，则会使用此超时。
+// duration: 默认超时时长。如果设置为 0 或负数，则禁用默认超时，完全依赖 context。
+func (c *Client) SetDefaultTimeout(duration time.Duration) {
+	if duration < 0 {
+		duration = 0
+	}
+	c.defaultTimeout = duration
+}
+
+// SetLogger 设置客户端使用的日志记录器。
+// logger: 一个 *log.Logger 实例。如果为 nil，则禁用日志记录。
+func (c *Client) SetLogger(logger *log.Logger) {
+	c.Logger = logger
+	// Potentially pass the logger down to the IOConnect if it supports logging
+	// if c.conn != nil && c.conn.SetLogger != nil { // Assuming IOConnect has SetLogger
+	//  c.conn.SetLogger(logger)
+	// }
 }
 
 // Connect 建立到 OpenPlant 服务的新连接。
@@ -36,23 +101,20 @@ func Connect(ctx context.Context, host string, port int, user string, pass strin
 	// 这里暂时选择重用现有的 Init 函数。
 	op, err := Init(host, port, int(timeout.Seconds()), user, pass) // 重用现有的 Init 函数进行连接
 	if err != nil {
-		return nil, fmt.Errorf("无法初始化连接: %w", err)
+		// Use custom error type if possible, otherwise wrap
+		return nil, fmt.Errorf("opio.Connect: 无法初始化连接到 %s:%d: %w", host, port, err)
 	}
-
-	// 可以在这里添加一个 PING 操作或检查连接是否真正活跃。
-	// 例如:
-	// if !op.Alive() {
-	//  op.Close() // 如果不活跃则关闭连接
-	//  return nil, errors.New("连接建立后不活跃")
-	// }
 
 	client := &Client{conn: op} // 创建 Client 实例
 
-	// 启动一个 goroutine，使用传入的 context 来监听取消信号
-	go func() {
-		<-ctx.Done()   // 等待 context 被取消
-		client.Close() // 当 context 取消时，自动关闭客户端连接
-	}()
+	// Ping the server to verify the connection after Init
+	pingCtx, cancel := context.WithTimeout(ctx, timeout) // Use connection timeout for ping
+	defer cancel()
+	if err := client.Ping(pingCtx); err != nil {
+		op.Close() // Close the underlying connection if ping fails
+		// Wrap the ping error
+		return nil, fmt.Errorf("opio.Connect: 连接后 Ping 服务器失败: %w", err)
+	}
 
 	// 设置默认压缩模式为不压缩。
 	client.compressionMode = ZIP_MODEL_Uncompressed // 使用 const.go 中定义的常量
@@ -63,43 +125,26 @@ func Connect(ctx context.Context, host string, port int, user string, pass strin
 }
 
 // Close 关闭与 OpenPlant 服务的连接。
-// 如果连接已关闭或从未建立，则返回错误。
+// 如果连接已关闭或从未建立，则返回 ErrConnectionClosed。
 func (c *Client) Close() error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭") // 防止重复关闭或对空连接操作
+		return ErrConnectionClosed // 使用自定义错误
 	}
 	err := c.conn.Close() // 调用底层 IOConnect 的 Close 方法
 	c.conn = nil          // 将底层连接设为 nil，标记客户端为已关闭状态
 	if err != nil {
-		return fmt.Errorf("关闭连接时出错: %w", err) // 如果底层关闭出错，包装并返回错误
+		// Enhanced error message
+		return fmt.Errorf("opio.Client.Close: 关闭连接时出错: %w", err)
 	}
-	return nil // 成功关闭，返回 nil
-}
-
-// Ping 检查与服务器的连接是否仍然活跃。
-// ctx: 用于控制 Ping 操作的上下文（当前实现未使用，但保留以备将来扩展）。
-// 如果连接不活跃或已关闭，则返回错误。
-func (c *Client) Ping(ctx context.Context) error {
-	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
-	}
-
-	// 原始的 IOConnect.Alive 方法似乎有自己的内部超时逻辑。
-	// 未来可以考虑如何将这里的 context 与底层操作结合，
-	// 或者在 Client 层面实现带 context 的 Ping 逻辑（可能需要发送一个 ECHO 请求）。
-	// 当前暂时直接调用底层的 Alive 方法。
-	if !c.conn.Alive() {
-		return errors.New("连接不活跃") // 如果底层连接报告不活跃，返回错误
-	}
-	return nil // 连接活跃，返回 nil
+	return nil
 }
 
 // SetCompression 设置客户端连接的压缩模式。
 // model: 压缩模式常量 (例如 opio.ZIP_MODEL_Uncompressed, opio.ZIP_MODEL_Frame)。类型为 byte。
-// 如果客户端未连接，则返回错误。
+// 如果客户端未连接，则返回 ErrConnectionClosed。
 func (c *Client) SetCompression(model byte) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed // 使用自定义错误
 	}
 	// 调用底层 IOConnect 的 SetCompressModel 方法
 	err := c.conn.SetCompressModel(model)
@@ -107,6 +152,31 @@ func (c *Client) SetCompression(model byte) error {
 		c.compressionMode = model // 如果设置成功，更新客户端实例中保存的压缩模式状态
 	}
 	return err // 返回底层方法可能产生的错误
+}
+
+// Ping 向服务器发送一个简单的请求以检查连接是否仍然活跃。
+// ctx: 用于控制操作的上下文。
+func (c *Client) Ping(ctx context.Context) error {
+	if c.conn == nil {
+		return ErrConnectionClosed
+	}
+
+	// 使用 ExecSQL 执行一个非常简单的、通常不会失败的 SQL 语句
+	// 或者，如果 opio 协议有专门的 PING 操作，应该使用那个。
+	// 这里假设使用 `SELECT 1` 作为 PING。
+	_, err := c.ExecSQL(ctx, "SELECT 1")
+	if err != nil {
+		// 检查是否是服务器错误
+		var opioErr *OpioServerError
+		if errors.As(err, &opioErr) {
+			// 如果是服务器明确返回错误，可能连接本身是好的，但 SQL 不被支持？
+			// 或者可以认为任何错误都表示 Ping 失败。
+			return fmt.Errorf("opio.Client.Ping: 执行 Ping 查询失败: %w", err)
+		}
+		// 其他错误（如超时、连接中断）
+		return fmt.Errorf("opio.Client.Ping: Ping 失败: %w", err)
+	}
+	return nil // Ping 成功
 }
 
 // ====================================================================================
@@ -136,9 +206,17 @@ type QueryResult struct {
 // opts: 查询选项，如过滤器、排序、分页等。
 // 返回包含结果的 QueryResult 指针或错误。
 // 此方法封装了构建 Request、发送请求和解析 Response 的过程。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) Query(ctx context.Context, tableName string, columns []string, opts *QueryOptions) (*QueryResult, error) {
 	if c.conn == nil {
-		return nil, errors.New("客户端未连接或已关闭")
+		return nil, ErrConnectionClosed // 使用自定义错误
+	}
+
+	// 应用默认超时 (如果需要且 context 没有 deadline)
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel() // 确保在函数退出时取消
 	}
 
 	// 定义一个结构体，用于在 goroutine 和主线程之间传递结果和错误
@@ -201,8 +279,8 @@ func (c *Client) Query(ctx context.Context, tableName string, columns []string, 
 		// 对于查询操作，通常只发送请求头 (包含属性)，没有数据体。
 		err := req.WriteAndFlush() // 发送请求头并刷新缓冲区
 		if err != nil {
-			// 发送失败，将错误发送到通道
-			done <- queryResultWithError{result: nil, err: fmt.Errorf("发送查询请求失败: %w", err)}
+			err = fmt.Errorf("opio.Client.Query: 发送查询请求失败 (Table: %s): %w", tableName, err) // Enhanced error
+			done <- queryResultWithError{result: nil, err: err}
 			return
 		}
 
@@ -210,16 +288,18 @@ func (c *Client) Query(ctx context.Context, tableName string, columns []string, 
 		// GetResponse 方法会读取响应头和可能的数据体 (DataSet)
 		res, err := req.GetResponse()
 		if err != nil {
-			// 获取响应失败，将错误发送到通道
-			done <- queryResultWithError{result: nil, err: fmt.Errorf("获取查询响应失败: %w", err)}
+			err = fmt.Errorf("opio.Client.Query: 获取查询响应失败 (Table: %s): %w", tableName, err) // Enhanced error
+			done <- queryResultWithError{result: nil, err: err}
 			return
 		}
 		// 注意：Response 对象本身通常不需要关闭，但其包含的 DataSet 需要关闭。
 
 		// 检查响应中是否包含错误信息
 		if res.GetErrNo() != 0 {
-			// 服务器返回错误，将错误信息发送到通道
-			done <- queryResultWithError{result: nil, err: fmt.Errorf("查询失败: %s (错误码: %d)", res.GetError(), res.GetErrNo())}
+			// Wrap server error using custom type
+			serverErr := &OpioServerError{Code: res.GetErrNo(), Message: res.GetError()}
+			err = fmt.Errorf("opio.Client.Query: 查询失败 (Table: %s): %w", tableName, serverErr)
+			done <- queryResultWithError{result: nil, err: err}
 			return
 		}
 
@@ -242,10 +322,10 @@ func (c *Client) Query(ctx context.Context, tableName string, columns []string, 
 		for {
 			hasNext, err := dataSet.Next() // 移动到下一行
 			if err != nil {
-				// 在迭代过程中发生错误 (例如网络中断)
-				// 关闭数据集，并将已读取的部分数据和错误发送到通道
+				// Enhanced error message
+				err = fmt.Errorf("opio.Client.Query: 读取数据集下一行时出错 (Table: %s): %w", tableName, err)
 				dataSet.Close()
-				done <- queryResultWithError{result: result, err: fmt.Errorf("读取数据集下一行时出错: %w", err)}
+				done <- queryResultWithError{result: result, err: err}
 				return
 			}
 			if !hasNext {
@@ -262,7 +342,6 @@ func (c *Client) Query(ctx context.Context, tableName string, columns []string, 
 				if err != nil {
 					// 获取列值时发生错误
 					// 可以选择记录警告、跳过该列或中断整个过程
-					fmt.Printf("警告: 获取行 %d 列 %d (%s) 的值失败: %v\n", len(result.Rows), i, col.name, err)
 					rowMap[col.name] = nil // 将该列的值设为 nil 或其他标记
 				} else {
 					rowMap[col.name] = val // 将获取到的值存入 map
@@ -280,10 +359,13 @@ func (c *Client) Query(ctx context.Context, tableName string, columns []string, 
 	// 使用 select 语句等待 goroutine 完成或外部 context 被取消
 	select {
 	case <-ctx.Done():
-		// 如果外部 context 被取消或超时
-		return nil, fmt.Errorf("查询操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		// 返回更具体的错误类型
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("opio.Client.Query: 查询操作超时 (Table: %s): %w", tableName, ErrTimeout)
+		}
+		return nil, fmt.Errorf("opio.Client.Query: 查询操作被取消 (Table: %s): %w", tableName, err)
 	case res := <-done:
-		// 如果 goroutine 完成
 		return res.result, res.err // 返回 goroutine 计算得到的结果和错误
 	}
 }
@@ -300,20 +382,20 @@ func (c *Client) Query(ctx context.Context, tableName string, columns []string, 
 // 7. 支持基本类型之间的自动转换 (例如 int 到 string, string 到 int 等)。
 // 如果映射失败或类型不兼容，将返回错误。
 func (qr *QueryResult) Scan(dest interface{}) error {
-	// 1. 验证目标类型是否为指向切片的非空指针
+	// 1. 验证目标类型
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
-		return errors.New("Scan 的目标必须是一个非空的指针")
+		return fmt.Errorf("%w: 目标不是指针或为 nil", ErrScanTargetInvalid)
 	}
-	sliceVal := destVal.Elem() // 获取指针指向的实际值
+	sliceVal := destVal.Elem()
 	if sliceVal.Kind() != reflect.Slice {
-		return errors.New("Scan 的目标必须指向一个切片")
+		return fmt.Errorf("%w: 目标指针未指向切片", ErrScanTargetInvalid)
 	}
 
-	// 2. 获取切片元素的基础类型（应该是结构体）
-	structType := sliceVal.Type().Elem() // 获取切片元素的类型
+	// 2. 获取切片元素的基础类型
+	structType := sliceVal.Type().Elem()
 	if structType.Kind() != reflect.Struct {
-		return errors.New("Scan 的目标切片元素必须是结构体")
+		return ErrScanElementInvalid // 使用自定义错误
 	}
 
 	// 3. 准备映射关系
@@ -401,11 +483,10 @@ func (qr *QueryResult) Scan(dest interface{}) error {
 					tempVal := reflect.New(elemType).Elem() // 创建临时变量以接收转换结果
 					err := assignWithConversion(tempVal, mapValueReflect)
 					if err != nil {
-						// 转换失败，返回详细错误信息
-						return fmt.Errorf("无法将列 '%s' 的值 (%T: %v) 赋给结构体字段 %s (*%s): %w",
+						// Enhanced error message
+						return fmt.Errorf("opio.QueryResult.Scan: 无法将列 '%s' 的值 (%T: %v) 赋给结构体字段 %s (*%s): %w",
 							originalColName, mapValue, mapValue, structType.Field(fieldIndex).Name, elemType.String(), err)
 					}
-					// 将转换后的值的地址赋给目标指针字段
 					structField.Set(tempVal.Addr())
 				}
 			} else if targetType.Kind() != reflect.Ptr && mapValueReflect.Kind() == reflect.Ptr {
@@ -420,10 +501,10 @@ func (qr *QueryResult) Scan(dest interface{}) error {
 				} else if mapValueReflect.Type().ConvertibleTo(targetType) {
 					structField.Set(mapValueReflect.Convert(targetType))
 				} else {
-					// 尝试通过 assignWithConversion 进行转换
 					err := assignWithConversion(structField, mapValueReflect)
 					if err != nil {
-						return fmt.Errorf("无法将列 '%s' 的解引用值 (%T: %v) 赋给结构体字段 %s (%s): %w",
+						// Enhanced error message
+						return fmt.Errorf("opio.QueryResult.Scan: 无法将列 '%s' 的解引用值 (%T: %v) 赋给结构体字段 %s (%s): %w",
 							originalColName, mapValueReflect.Interface(), mapValueReflect.Interface(), structType.Field(fieldIndex).Name, targetType.String(), err)
 					}
 				}
@@ -438,8 +519,8 @@ func (qr *QueryResult) Scan(dest interface{}) error {
 				// 尝试使用自定义的转换逻辑
 				err := assignWithConversion(structField, mapValueReflect)
 				if err != nil {
-					// 自定义转换也失败，返回错误
-					return fmt.Errorf("无法将列 '%s' 的值 (%T: %v) 赋给结构体字段 %s (%s): %w",
+					// Enhanced error message
+					return fmt.Errorf("opio.QueryResult.Scan: 无法将列 '%s' 的值 (%T: %v) 赋给结构体字段 %s (%s): %w",
 						originalColName, mapValue, mapValue, structType.Field(fieldIndex).Name, targetType.String(), err)
 				}
 			}
@@ -598,11 +679,26 @@ func assignWithConversion(targetField reflect.Value, sourceValue reflect.Value) 
 		return nil
 	}
 
-	// --- 在此添加更多自定义转换规则 ---
-	// 例如，处理 JSON 字符串到结构体/map 的转换等
+	// 示例：处理 JSON 字符串到 map 或 struct 的转换
+	if (targetType.Kind() == reflect.Map || targetType.Kind() == reflect.Struct || targetType.Kind() == reflect.Slice) && sourceType.Kind() == reflect.String {
+		sourceStr := sourceValue.String()
+		// 检查字符串是否可能是 JSON (简单的检查)
+		if (strings.HasPrefix(sourceStr, "{") && strings.HasSuffix(sourceStr, "}")) || (strings.HasPrefix(sourceStr, "[") && strings.HasSuffix(sourceStr, "]")) {
+			// 创建目标类型的零值指针，用于 Unmarshal
+			targetPtr := reflect.New(targetType)
+			err := json.Unmarshal([]byte(sourceStr), targetPtr.Interface())
+			if err == nil {
+				// Unmarshal 成功，将解引用后的值赋给目标字段
+				targetField.Set(targetPtr.Elem())
+				return nil
+			}
+			// 如果 Unmarshal 失败，则忽略错误，继续尝试其他转换或返回错误
+			// 可以选择记录这个 JSON 解析错误
+		}
+	}
 
 	// 如果以上所有转换规则都不匹配，则返回不支持转换的错误
-	return fmt.Errorf("不支持从类型 %s 到 %s 的转换", sourceType.String(), targetType.String())
+	return fmt.Errorf("不支持从类型 %s (%v) 到 %s 的转换", sourceType.String(), sourceValue.Interface(), targetType.String())
 }
 
 // ====================================================================================
@@ -617,15 +713,23 @@ func assignWithConversion(targetField reflect.Value, sourceValue reflect.Value) 
 // - 此实现会从 `data` 的第一行推断列名和数据类型。它假设所有行具有相同的结构。
 // - 对于更复杂或类型不一致的数据，可能需要提供显式的列定义或采用不同的处理方式。
 // 如果插入成功，返回 nil，否则返回错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) Insert(ctx context.Context, tableName string, data []map[string]interface{}) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
 	}
 	if len(data) == 0 {
-		return errors.New("没有要插入的数据") // 如果没有数据，直接返回错误
+		return errors.New("没有要插入的数据")
 	}
 
-	done := make(chan error, 1) // 用于 goroutine 通信的通道
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
+	}
+
+	done := make(chan error, 1)
 
 	go func() {
 		// --- 在 goroutine 中执行实际的插入逻辑 ---
@@ -667,7 +771,6 @@ func (c *Client) Insert(ctx context.Context, tableName string, data []map[string
 					err := insertTable.SetColumnEmpty(uint32(i))
 					if err != nil {
 						// 记录设置空值时可能出现的错误
-						fmt.Printf("警告: 设置行 %d 列 %d (%s) 为空时出错: %v\n", insertTable.RowCount(), i, colName, err)
 					}
 					continue // 继续处理下一列
 				}
@@ -677,7 +780,6 @@ func (c *Client) Insert(ctx context.Context, tableName string, data []map[string
 					// 处理设置列值时可能发生的错误 (例如类型不匹配)
 					// 可以选择记录错误并继续，或者立即中断并返回错误
 					// 这里选择记录警告并继续，最终错误会在 SetTable 时统一检查
-					fmt.Printf("警告: 设置行 %d 列 %d (%s) 的值 (%v) 时出错: %v\n", insertTable.RowCount(), i, colName, value, err)
 				}
 			}
 			// 当前行的所有列都已设置 (或尝试设置)，绑定当前行数据到 Table
@@ -719,7 +821,8 @@ func (c *Client) Insert(ctx context.Context, tableName string, data []map[string
 
 		// 检查响应中是否包含错误
 		if res.GetErrNo() != 0 {
-			done <- fmt.Errorf("插入失败: %s (错误码: %d)", res.GetError(), res.GetErrNo())
+			serverErr := &OpioServerError{Code: res.GetErrNo(), Message: res.GetError()}
+			done <- fmt.Errorf("插入失败 (Table: %s): %w", tableName, serverErr)
 			return
 		}
 
@@ -728,14 +831,15 @@ func (c *Client) Insert(ctx context.Context, tableName string, data []map[string
 		// --- goroutine 结束 ---
 	}()
 
-	// 使用 select 等待 goroutine 完成或 context 取消
 	select {
 	case <-ctx.Done():
-		// 如果外部 context 被取消或超时
-		return fmt.Errorf("插入操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("插入操作超时 (Table: %s): %w", tableName, ErrTimeout)
+		}
+		return fmt.Errorf("插入操作被取消 (Table: %s): %w", tableName, err)
 	case err := <-done:
-		// 如果 goroutine 完成
-		return err // 返回 goroutine 的执行结果 (可能为 nil 或错误)
+		return err
 	}
 }
 
@@ -745,15 +849,27 @@ func (c *Client) Insert(ctx context.Context, tableName string, data []map[string
 // updates: 一个 map，键是要更新的列名，值是对应的新列值。
 // filters: 一个 Filter 切片，定义了要更新哪些行。如果为空，则可能更新所有行 (取决于后端实现和权限)。
 // 如果更新成功，返回 nil，否则返回错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) Update(ctx context.Context, tableName string, updates map[string]interface{}, filters []Filter) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
 	}
 	if len(updates) == 0 {
-		return errors.New("没有要更新的数据") // 如果没有指定更新内容，返回错误
+		return errors.New("没有要更新的数据")
+	}
+	// 考虑是否强制要求 filters 不为空
+	// if len(filters) == 0 {
+	// 	return errors.New("opio: update operation requires filters to prevent accidental full table update")
+	// }
+
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
 	}
 
-	done := make(chan error, 1) // 用于 goroutine 通信
+	done := make(chan error, 1)
 
 	go func() {
 		// --- 在 goroutine 中执行实际的更新逻辑 ---
@@ -798,7 +914,6 @@ func (c *Client) Update(ctx context.Context, tableName string, updates map[strin
 			err := updateTable.SetColumnValue(uint32(i), value)
 			if err != nil {
 				// 记录设置值时可能发生的错误
-				fmt.Printf("警告: 设置更新列 %d (%s) 的值 (%v) 时出错: %v\n", i, colName, value, err)
 			}
 		}
 		updateTable.BindRow() // 绑定这一行数据
@@ -833,7 +948,8 @@ func (c *Client) Update(ctx context.Context, tableName string, updates map[strin
 
 		// 检查响应中是否包含错误
 		if res.GetErrNo() != 0 {
-			done <- fmt.Errorf("更新失败: %s (错误码: %d)", res.GetError(), res.GetErrNo())
+			serverErr := &OpioServerError{Code: res.GetErrNo(), Message: res.GetError()}
+			done <- fmt.Errorf("更新失败 (Table: %s): %w", tableName, serverErr)
 			return
 		}
 
@@ -842,12 +958,15 @@ func (c *Client) Update(ctx context.Context, tableName string, updates map[strin
 		// --- goroutine 结束 ---
 	}()
 
-	// 使用 select 等待 goroutine 完成或 context 取消
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("更新操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("更新操作超时 (Table: %s): %w", tableName, ErrTimeout)
+		}
+		return fmt.Errorf("更新操作被取消 (Table: %s): %w", tableName, err)
 	case err := <-done:
-		return err // 返回 goroutine 的执行结果
+		return err
 	}
 }
 
@@ -855,18 +974,26 @@ func (c *Client) Update(ctx context.Context, tableName string, updates map[strin
 // ctx: 用于控制操作的上下文。
 // tableName: 要删除数据的目标表名。
 // filters: 一个 Filter 切片，定义了要删除哪些行。
-// **警告:** 如果 filters 为空，此操作可能会删除表中的所有数据，请务必谨慎！
+// **警告:** 如果 filters 为空，此操作可能会删除表中的所有数据！请务必谨慎或在调用前添加检查。
 // 如果删除成功，返回 nil，否则返回错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) Delete(ctx context.Context, tableName string, filters []Filter) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
 	}
-	// 强烈建议在调用此方法前进行检查，防止在 filters 为空时意外删除整个表的数据
+	// 考虑是否强制要求 filters 不为空
 	// if len(filters) == 0 {
-	//  return errors.New("不允许在没有过滤器的情况下执行删除操作，以防止意外删除全表数据")
+	// 	return errors.New("opio: delete operation requires filters to prevent accidental full table deletion")
 	// }
 
-	done := make(chan error, 1) // 用于 goroutine 通信
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
+	}
+
+	done := make(chan error, 1)
 
 	go func() {
 		// --- 在 goroutine 中执行实际的删除逻辑 ---
@@ -901,7 +1028,8 @@ func (c *Client) Delete(ctx context.Context, tableName string, filters []Filter)
 
 		// 检查响应中是否包含错误
 		if res.GetErrNo() != 0 {
-			done <- fmt.Errorf("删除失败: %s (错误码: %d)", res.GetError(), res.GetErrNo())
+			serverErr := &OpioServerError{Code: res.GetErrNo(), Message: res.GetError()}
+			done <- fmt.Errorf("删除失败 (Table: %s): %w", tableName, serverErr)
 			return
 		}
 
@@ -910,12 +1038,15 @@ func (c *Client) Delete(ctx context.Context, tableName string, filters []Filter)
 		// --- goroutine 结束 ---
 	}()
 
-	// 使用 select 等待 goroutine 完成或 context 取消
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("删除操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("删除操作超时 (Table: %s): %w", tableName, ErrTimeout)
+		}
+		return fmt.Errorf("删除操作被取消 (Table: %s): %w", tableName, err)
 	case err := <-done:
-		return err // 返回 goroutine 的执行结果
+		return err
 	}
 }
 
@@ -1012,9 +1143,17 @@ func (c *Client) QueryInto(ctx context.Context, dest interface{}, tableName stri
 //	标签为 `"-"` 或未导出的字段会被忽略。
 //
 // 如果插入成功，返回 nil，否则返回错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) InsertStructs(ctx context.Context, tableName string, data interface{}) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
+	}
+
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
 	}
 
 	// 1. 验证输入类型并获取切片值
@@ -1101,7 +1240,6 @@ func (c *Client) InsertStructs(ctx context.Context, tableName string, data inter
 			err := insertTable.SetColumnValue(uint32(i), fieldValue)
 			if err != nil {
 				// 记录设置列值时的错误
-				fmt.Printf("警告: InsertStructs 设置行 %d 列 %d (%s) 的值 (%v) 时出错: %v\n", rowIndex, i, colName, fieldValue, err)
 			}
 		}
 		insertTable.BindRow() // 绑定当前行
@@ -1138,20 +1276,24 @@ func (c *Client) InsertStructs(ctx context.Context, tableName string, data inter
 		// 获取响应
 		res, err := req.GetResponse()
 		if err != nil {
-			done <- fmt.Errorf("获取插入响应失败: %w", err)
+			done <- fmt.Errorf("获取插入响应失败 (Table: %s): %w", tableName, err)
 			return
 		}
 		if res.GetErrNo() != 0 {
-			done <- fmt.Errorf("插入失败: %s (错误码: %d)", res.GetError(), res.GetErrNo())
+			serverErr := &OpioServerError{Code: res.GetErrNo(), Message: res.GetError()}
+			done <- fmt.Errorf("插入失败 (Table: %s): %w", tableName, serverErr)
 			return
 		}
 		done <- nil // 成功
 	}()
 
-	// 等待完成或 context 取消
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("插入操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("插入操作超时 (Table: %s): %w", tableName, ErrTimeout)
+		}
+		return fmt.Errorf("插入操作被取消 (Table: %s): %w", tableName, err)
 	case err := <-done:
 		return err
 	}
@@ -1162,21 +1304,21 @@ func (c *Client) InsertStructs(ctx context.Context, tableName string, data inter
 // ctx: 用于控制操作的上下文。
 // tableName: 要更新的目标表名。
 // data: 必须是一个结构体实例或指向结构体的指针 (例如 MyStruct 或 *MyStruct)。
-//
-//	结构体字段通过 `opio:"列名"` 或 `db:"列名"` 标签映射到要更新的数据库列。
-//	默认情况下，所有带标签的导出字段都会被用于更新。
-//	(未来可以增加选项，例如只更新非零值字段或指定字段)。
-//
 // filters: 一个 Filter 切片，定义了要更新哪些行。**不能为空**，以防止意外更新全表。
+// updateFields (可选): 一个字符串切片，指定只更新哪些列名 (对应结构体标签)。如果为空或 nil，则更新所有带标签的字段。
+// TODO: (UpdateStruct) 可以增加选项来支持只更新非零值字段。
 // 如果更新成功，返回 nil，否则返回错误。
-func (c *Client) UpdateStruct(ctx context.Context, tableName string, data interface{}, filters []Filter) error {
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
+func (c *Client) UpdateStruct(ctx context.Context, tableName string, data interface{}, filters []Filter, updateFields ...string) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
 	}
 	if len(filters) == 0 {
-		// 强制要求提供过滤器，防止意外更新整个表
-		return errors.New("UpdateStruct 必须提供过滤器 (filters)")
+		return ErrUpdateRequiresFilters // 使用自定义错误
 	}
+
+	// 应用默认超时 (注意：超时应用于底层的 Update 调用)
+	// 这里不直接应用，让 Update 方法处理
 
 	// 1. 验证输入类型并获取结构体值
 	val := reflect.ValueOf(data)
@@ -1193,6 +1335,14 @@ func (c *Client) UpdateStruct(ctx context.Context, tableName string, data interf
 
 	// 2. 提取要更新的列和值
 	updates := make(map[string]interface{})
+	updateFieldSet := make(map[string]bool) // 用于快速查找是否需要更新某个字段
+	onlySpecificFields := len(updateFields) > 0
+	if onlySpecificFields {
+		for _, f := range updateFields {
+			updateFieldSet[strings.ToLower(f)] = true // 使用小写进行比较
+		}
+	}
+
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
 		if !field.IsExported() { // 跳过未导出字段
@@ -1202,18 +1352,36 @@ func (c *Client) UpdateStruct(ctx context.Context, tableName string, data interf
 		if tag == "" {
 			tag = field.Tag.Get("db")
 		}
-		if tag == "-" || tag == "" { // 跳过忽略的字段或没有标签的字段 (更新时通常需要明确指定列)
+		colName := tag
+		if colName == "" { // 无标签，使用字段名 (但更新时通常需要标签)
+			colName = field.Name
+			// 如果没有标签且未在 updateFields 中指定，则跳过
+			if onlySpecificFields && !updateFieldSet[strings.ToLower(colName)] {
+				continue
+			}
+			// 如果没有标签且不是指定更新，也跳过 (避免意外更新无标签字段)
+			if !onlySpecificFields {
+				continue
+			}
+		}
+
+		// 如果指定了更新字段，但当前字段不在列表中，则跳过
+		if onlySpecificFields && !updateFieldSet[strings.ToLower(colName)] {
 			continue
 		}
+
 		// 获取字段值并添加到 updates map
-		updates[tag] = val.Field(i).Interface()
+		updates[colName] = val.Field(i).Interface()
 	}
 
 	if len(updates) == 0 {
-		return errors.New("未找到可用于更新的带标签的结构体字段")
+		if onlySpecificFields {
+			return fmt.Errorf("%w: 未找到与 updateFields 匹配的字段", ErrNoFieldsToUpdate)
+		}
+		return fmt.Errorf("%w: 未找到带标签的字段", ErrNoFieldsToUpdate)
 	}
 
-	// 3. 调用现有的 Update 方法 (基于 map 的版本)
+	// 3. 调用现有的 Update 方法 (基于 map 的版本)，它会处理 context 和超时
 	return c.Update(ctx, tableName, updates, filters)
 }
 
@@ -1223,13 +1391,21 @@ func (c *Client) UpdateStruct(ctx context.Context, tableName string, data interf
 // tableName: 要删除数据的目标表名。
 // idColumn: 作为主键或唯一标识的列名。
 // id: 要删除的记录的 ID 值。其类型应与 idColumn 的数据库类型兼容 (例如 int, int32, int64, string)。
+// **安全警告:** 当前的 ID 到字符串转换逻辑非常基础，仅处理常见类型且包含极其简单的 SQL 转义 (仅替换单引号)。
+// 这 **绝对不足以** 防止所有类型的 SQL 注入攻击，尤其是在处理用户输入时。
+// **强烈建议** 在生产环境中使用参数化查询（如果 OpenPlant 支持）或使用经过验证的 SQL 构建库来处理 ID 值，而不是依赖此基础转换。
+// TODO: (DeleteByID) 替换此基础转换逻辑为更安全的机制。
 // 如果删除成功，返回 nil，否则返回错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) DeleteByID(ctx context.Context, tableName string, idColumn string, id interface{}) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
 	}
 
-	// 1. 将 ID 值转换为适合过滤器的字符串形式
+	// 应用默认超时 (注意：超时应用于底层的 Delete 调用)
+	// 这里不直接应用，让 Delete 方法处理
+
+	// 1. 将 ID 值转换为适合过滤器的字符串形式 (注意警告)
 	var idStr string
 	switch v := id.(type) {
 	case string:
@@ -1254,8 +1430,7 @@ func (c *Client) DeleteByID(ctx context.Context, tableName string, idColumn stri
 			idStr = "0" // 或者 'false'
 		}
 	default:
-		// 对于其他不支持的类型，返回错误
-		return fmt.Errorf("DeleteByID 不支持的 ID 类型: %T", id)
+		return fmt.Errorf("%w: %T", ErrUnsupportedIDType, id) // 使用自定义错误
 	}
 
 	// 2. 创建过滤器
@@ -1278,12 +1453,20 @@ func (c *Client) DeleteByID(ctx context.Context, tableName string, idColumn stri
 //	函数执行后，将填充每个 Value 对应的 TM (时间戳), DS (状态), AV (值) 字段。
 //
 // 如果读取成功，返回 nil，否则返回错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) ReadRealtime(ctx context.Context, values []Value) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
 	}
 	if len(values) == 0 {
-		return errors.New("没有要读取的实时数据点") // 如果输入为空，直接返回
+		return errors.New("没有要读取的实时数据点")
+	}
+
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
 	}
 
 	// 使用通道在 goroutine 和主线程间传递错误信息
@@ -1298,17 +1481,17 @@ func (c *Client) ReadRealtime(ctx context.Context, values []Value) error {
 	// 使用 select 等待 goroutine 完成或 context 被取消
 	select {
 	case <-ctx.Done():
-		// 如果 context 被取消或超时
-		// 注意：底层的网络操作可能无法直接中断，但我们可以不再等待其结果。
-		// 这可能导致资源暂时未释放，但最终会被 Go 的垃圾回收处理。
-		return fmt.Errorf("读取实时数据操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("读取实时数据操作超时: %w", ErrTimeout)
+		}
+		return fmt.Errorf("读取实时数据操作被取消: %w", err)
 	case err := <-done:
-		// 如果 goroutine 完成
 		if err != nil {
-			// 如果底层调用返回错误，包装并返回
+			// TODO: Check if err from conn.ReadRealtime can be wrapped with OpioServerError
 			return fmt.Errorf("读取实时数据失败: %w", err)
 		}
-		return nil // 操作成功
+		return nil
 	}
 }
 
@@ -1316,29 +1499,41 @@ func (c *Client) ReadRealtime(ctx context.Context, values []Value) error {
 // ctx: 用于控制操作的上下文。
 // values: 一个 Value 切片，包含要写入的点位 ID, TM (时间戳), DS (状态), AV (值) 数据。
 // 如果写入成功，返回 nil，否则返回错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) WriteRealtime(ctx context.Context, values []Value) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
 	}
 	if len(values) == 0 {
-		return errors.New("没有要写入的实时数据") // 如果输入为空，直接返回
+		return errors.New("没有要写入的实时数据")
 	}
 
-	done := make(chan error, 1) // 用于 goroutine 通信
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
+	}
+
+	done := make(chan error, 1)
 	go func() {
 		err := c.conn.WriteRealtime(values) // 调用底层的 WriteRealtime
 		done <- err                         // 发送结果
 	}()
 
-	// 等待完成或取消
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("写入实时数据操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("写入实时数据操作超时: %w", ErrTimeout)
+		}
+		return fmt.Errorf("写入实时数据操作被取消: %w", err)
 	case err := <-done:
 		if err != nil {
+			// TODO: Check if err from conn.WriteRealtime can be wrapped with OpioServerError
 			return fmt.Errorf("写入实时数据失败: %w", err)
 		}
-		return nil // 操作成功
+		return nil
 	}
 }
 
@@ -1349,9 +1544,17 @@ func (c *Client) WriteRealtime(ctx context.Context, values []Value) error {
 // begin, end: 查询的时间范围。
 // interval: 查询间隔（仅在某些聚合查询模式下有效，单位秒）。
 // 返回值: 包含查询结果的 Archive 指针切片，或者一个错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) ReadArchive(ctx context.Context, ids []int32, mode int32, begin, end time.Time, interval int32) ([]*Archive, error) {
 	if c.conn == nil {
-		return nil, errors.New("客户端未连接或已关闭")
+		return nil, ErrConnectionClosed
+	}
+
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
 	}
 
 	// 定义用于 goroutine 通信的结构体
@@ -1367,15 +1570,19 @@ func (c *Client) ReadArchive(ctx context.Context, ids []int32, mode int32, begin
 		done <- result{archives: archives, err: err} // 发送结果
 	}()
 
-	// 等待完成或取消
 	select {
 	case <-ctx.Done():
-		return nil, fmt.Errorf("读取历史数据操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("读取历史数据操作超时: %w", ErrTimeout)
+		}
+		return nil, fmt.Errorf("读取历史数据操作被取消: %w", err)
 	case res := <-done:
 		if res.err != nil {
-			return nil, fmt.Errorf("读取历史数据失败: %w", res.err) // 返回错误
+			// TODO: Check if err from conn.ReadArchive can be wrapped with OpioServerError
+			return nil, fmt.Errorf("读取历史数据失败: %w", res.err)
 		}
-		return res.archives, nil // 返回结果
+		return res.archives, nil
 	}
 }
 
@@ -1384,26 +1591,38 @@ func (c *Client) ReadArchive(ctx context.Context, ids []int32, mode int32, begin
 // archives: 一个 Archive 指针切片，包含要写入的历史数据 (每个 Archive 包含点位 ID 和 Value 数据点)。
 // cache: 是否使用缓存写入模式 (通常用于批量写入)。
 // 如果写入成功，返回 nil，否则返回错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) WriteArchive(ctx context.Context, archives []*Archive, cache bool) error {
 	if c.conn == nil {
-		return errors.New("客户端未连接或已关闭")
+		return ErrConnectionClosed
 	}
 
-	done := make(chan error, 1) // 用于 goroutine 通信
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
+	}
+
+	done := make(chan error, 1)
 	go func() {
 		err := c.conn.WriteArchive(archives, cache) // 调用底层的 WriteArchive
 		done <- err                                 // 发送结果
 	}()
 
-	// 等待完成或取消
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("写入历史数据操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("写入历史数据操作超时: %w", ErrTimeout)
+		}
+		return fmt.Errorf("写入历史数据操作被取消: %w", err)
 	case err := <-done:
 		if err != nil {
+			// TODO: Check if err from conn.WriteArchive can be wrapped with OpioServerError
 			return fmt.Errorf("写入历史数据失败: %w", err)
 		}
-		return nil // 操作成功
+		return nil
 	}
 }
 
@@ -1414,9 +1633,17 @@ func (c *Client) WriteArchive(ctx context.Context, archives []*Archive, cache bo
 // begin, end: 查询的时间范围。
 // interval: 统计间隔（单位秒）。
 // 返回值: 包含查询结果的 Stat 指针切片，或者一个错误。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) ReadStat(ctx context.Context, ids []int32, mode int32, begin, end time.Time, interval int32) ([]*Stat, error) {
 	if c.conn == nil {
-		return nil, errors.New("客户端未连接或已关闭")
+		return nil, ErrConnectionClosed
+	}
+
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
 	}
 
 	// 定义用于 goroutine 通信的结构体
@@ -1432,15 +1659,19 @@ func (c *Client) ReadStat(ctx context.Context, ids []int32, mode int32, begin, e
 		done <- result{stats: stats, err: err} // 发送结果
 	}()
 
-	// 等待完成或取消
 	select {
 	case <-ctx.Done():
-		return nil, fmt.Errorf("读取统计数据操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("读取统计数据操作超时: %w", ErrTimeout)
+		}
+		return nil, fmt.Errorf("读取统计数据操作被取消: %w", err)
 	case res := <-done:
 		if res.err != nil {
-			return nil, fmt.Errorf("读取统计数据失败: %w", res.err) // 返回错误
+			// TODO: Check if err from conn.ReadStat can be wrapped with OpioServerError
+			return nil, fmt.Errorf("读取统计数据失败: %w", res.err)
 		}
-		return res.stats, nil // 返回结果
+		return res.stats, nil
 	}
 }
 
@@ -1471,12 +1702,12 @@ func (s *Subscription) Events() <-chan SubscriptionEvent {
 
 // Close 关闭此订阅会话。
 // 它会停止接收数据，取消内部处理 goroutine，并关闭底层的 opio 订阅连接。
-// 多次调用 Close 是安全的。
+// 多次调用 Close 是安全的，后续调用将返回 ErrSubscriptionClosed。
 func (s *Subscription) Close() error {
 	// 使用 select 和 closed 通道防止重复关闭
 	select {
 	case <-s.closed:
-		return errors.New("订阅已关闭") // 如果已经关闭，直接返回错误
+		return ErrSubscriptionClosed // 使用自定义错误
 	default:
 		close(s.closed) // 关闭 closed 通道，标记为已关闭状态
 	}
@@ -1500,14 +1731,14 @@ func (s *Subscription) Close() error {
 
 // AddKeys 动态地向当前活动的订阅添加新的键 (例如，点位 ID)。
 // keys: 要添加的键列表。其类型应与初始化订阅时使用的类型匹配 (例如 []int32, []int64, 或 []string)。
-// 如果订阅已关闭或添加失败，返回错误。
+// 如果订阅已关闭或添加失败，返回 ErrSubscriptionClosed 或其他错误。
 func (s *Subscription) AddKeys(keys interface{}) error {
 	select {
-	case <-s.closed: // 检查订阅是否已关闭
-		return errors.New("订阅已关闭")
+	case <-s.closed:
+		return ErrSubscriptionClosed // 使用自定义错误
 	default:
-		if s.sub == nil { // 检查底层对象是否有效
-			return errors.New("底层订阅无效")
+		if s.sub == nil {
+			return errors.New("opio: 底层订阅对象无效") // Or return ErrSubscriptionClosed?
 		}
 		// 调用底层 Subscribe 对象的 Subscribe 方法来添加键
 		// 注意：底层的 Subscribe 方法可能用于添加键，而不是创建新订阅
@@ -1517,14 +1748,14 @@ func (s *Subscription) AddKeys(keys interface{}) error {
 
 // RemoveKeys 动态地从当前活动的订阅中移除键。
 // keys: 要移除的键列表。其类型应与初始化订阅时使用的类型匹配。
-// 如果订阅已关闭或移除失败，返回错误。
+// 如果订阅已关闭或移除失败，返回 ErrSubscriptionClosed 或其他错误。
 func (s *Subscription) RemoveKeys(keys interface{}) error {
 	select {
-	case <-s.closed: // 检查订阅是否已关闭
-		return errors.New("订阅已关闭")
+	case <-s.closed:
+		return ErrSubscriptionClosed // 使用自定义错误
 	default:
-		if s.sub == nil { // 检查底层对象是否有效
-			return errors.New("底层订阅无效")
+		if s.sub == nil {
+			return errors.New("opio: 底层订阅对象无效") // Or return ErrSubscriptionClosed?
 		}
 		// 调用底层 Subscribe 对象的 UnSubscribe 方法来移除键
 		return s.sub.UnSubscribe(keys)
@@ -1544,12 +1775,13 @@ type SubscribeOptions struct {
 // keys: 初始要订阅的键列表。类型必须是 []int32, []int64 或 []string，与 keyName 列的数据类型匹配。
 // opts: 订阅选项 (例如是否获取快照)。
 // 返回值: 一个 Subscription 对象用于管理订阅和接收事件，或者一个错误。
+// 注意：订阅通常使用独立的连接，不受 Client.defaultTimeout 影响。其生命周期由传入的 context 控制。
 func (c *Client) Subscribe(ctx context.Context, tableName string, keyName string, keys interface{}, opts *SubscribeOptions) (*Subscription, error) {
 	if c.conn == nil {
-		return nil, errors.New("客户端未连接或已关闭")
+		return nil, ErrConnectionClosed
 	}
 
-	// 验证 keys 参数的类型 - 底层的 InitSubscribe 方法会进行验证，这里可以省略显式检查
+	// 验证 keys 参数的类型 - 底层的 InitSubscribe 方法会进行验证，这里可以省略
 	// （保留注释作为参考）
 	// var keyType int
 	// switch keys.(type) {
@@ -1610,11 +1842,11 @@ func (c *Client) Subscribe(ctx context.Context, tableName string, keyName string
 
 		// 检查响应中是否包含错误
 		if res.GetErrNo() != 0 {
-			// 如果有错误，创建一个错误事件并尝试发送到事件通道
-			errEvent := SubscriptionEvent{Err: fmt.Errorf("%s (错误码: %d)", res.GetError(), res.GetErrNo())}
+			serverErr := &OpioServerError{Code: res.GetErrNo(), Message: res.GetError()}
+			errEvent := SubscriptionEvent{Err: fmt.Errorf("opio.Subscription: 收到服务器错误: %w", serverErr)}
 			select {
-			case eventCh <- errEvent: // 发送错误事件
-			case <-subCtx.Done(): // 如果在发送时上下文被取消，则放弃发送
+			case eventCh <- errEvent:
+			case <-subCtx.Done():
 			}
 			// 注意：原始的 opio 回调可能包含自动重连逻辑。
 			// 在这个封装中，我们简化为仅报告错误。用户可以根据收到的错误决定是否重新订阅。
@@ -1661,7 +1893,6 @@ func (c *Client) Subscribe(ctx context.Context, tableName string, keyName string
 				val, err := dataSet.GetValue(uint32(i)) // 获取列值
 				if err != nil {
 					// 获取列值时出错，记录警告，并将值设为 nil
-					fmt.Printf("警告: 获取订阅行 %d 列 %d (%s) 的值失败: %v\n", dataSet.rowCursor-1, i, col.name, err) // rowCursor 可能已增加
 					rowMap[col.name] = nil
 				} else {
 					rowMap[col.name] = val // 存入 map
@@ -1718,9 +1949,17 @@ func (c *Client) Subscribe(ctx context.Context, tableName string, keyName string
 // - 对于非 SELECT 语句 (如 INSERT, UPDATE, DELETE, CREATE)，如果执行成功，通常返回一个空的 QueryResult (无行无列) 和 nil 错误。
 // - 如果执行失败，返回 nil QueryResult 和一个错误。
 // 此方法支持通过 context 进行取消或超时控制。
+// 如果提供的 context 没有截止时间，并且设置了 Client.defaultTimeout，则会应用默认超时。
 func (c *Client) ExecSQL(ctx context.Context, sql string) (*QueryResult, error) {
 	if c.conn == nil {
-		return nil, errors.New("客户端未连接或已关闭")
+		return nil, ErrConnectionClosed
+	}
+
+	// 应用默认超时
+	var cancel context.CancelFunc
+	if _, deadlineSet := ctx.Deadline(); !deadlineSet && c.defaultTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.defaultTimeout)
+		defer cancel()
 	}
 
 	// 定义用于 goroutine 通信的结构体
@@ -1756,7 +1995,8 @@ func (c *Client) ExecSQL(ctx context.Context, sql string) (*QueryResult, error) 
 
 		// 检查响应错误
 		if res.GetErrNo() != 0 {
-			done <- execResultWithError{result: nil, err: fmt.Errorf("SQL 执行失败: %s (错误码: %d)", res.GetError(), res.GetErrNo())}
+			serverErr := &OpioServerError{Code: res.GetErrNo(), Message: res.GetError()}
+			done <- execResultWithError{result: nil, err: fmt.Errorf("SQL 执行失败: %w", serverErr)}
 			return
 		}
 
@@ -1793,7 +2033,6 @@ func (c *Client) ExecSQL(ctx context.Context, sql string) (*QueryResult, error) 
 				val, err := dataSet.GetValue(uint32(i)) // 获取列值
 				if err != nil {
 					// 获取值出错，记录警告
-					fmt.Printf("警告: 获取 SQL 结果行 %d 列 %d (%s) 的值失败: %v\n", len(result.Rows), i, col.name, err)
 					rowMap[col.name] = nil
 				} else {
 					rowMap[col.name] = val
@@ -1807,12 +2046,15 @@ func (c *Client) ExecSQL(ctx context.Context, sql string) (*QueryResult, error) 
 		// --- goroutine 结束 ---
 	}()
 
-	// 使用 select 等待 goroutine 完成或 context 取消
 	select {
 	case <-ctx.Done():
-		return nil, fmt.Errorf("SQL 执行操作被取消或超时: %w", ctx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("SQL 执行操作超时: %w", ErrTimeout)
+		}
+		return nil, fmt.Errorf("SQL 执行操作被取消: %w", err)
 	case res := <-done:
-		return res.result, res.err // 返回 goroutine 的结果和错误
+		return res.result, res.err
 	}
 }
 
@@ -1820,10 +2062,215 @@ func (c *Client) ExecSQL(ctx context.Context, sql string) (*QueryResult, error) 
 // TODOs and Future Considerations
 // ====================================================================================
 
-// TODO: (待办事项)
-// 1. 错误处理: 可以考虑提供更具体的错误类型，方便调用者进行错误判断和处理。
-// 2. UpdateStruct: 更新策略可以更灵活 (例如只更新非零值字段，或提供选项指定要更新的字段)。
-// 3. DeleteByID: ID 到字符串的转换可以进一步增强，例如处理更多数据库特定的引号规则或数据类型。
-// 4. Scan/assignWithConversion: 可以添加更多自定义类型转换规则，例如处理 JSON 字符串到 map/struct 的转换。
-// 5. 配置选项: Client 可以增加更多配置项，如日志记录器、默认请求超时等。
-// 6. 连接池: 对于高并发场景，可以考虑实现或集成连接池。
+// TODO: (待办事项 / Future Considerations)
+// 1. 错误处理:
+//    - V3 API (ReadRealtime, WriteRealtime, etc.) 的错误尚未完全包装为 OpioServerError。需要检查底层 conn 方法返回的错误是否包含可解析的错误码和消息。
+//    - 可以为更具体的操作失败（如 Insert 失败、Update 失败）定义更细粒度的错误类型，但这可能会增加复杂性。
+// 2. UpdateStruct:
+//    - 可以添加一个选项 (例如 `UpdateOptions` 结构体参数) 来支持 "只更新非零值字段" 的策略。这需要使用反射检查字段值是否为其类型的零值。
+// 3. DeleteByID:
+//    - ID 到字符串的转换和 SQL 转义仍然是基本的。对于生产环境，强烈建议研究 OpenPlant 是否支持参数化查询，或者使用更健壮的 SQL 构建库来处理不同类型的 ID 和转义。
+// 4. Scan/assignWithConversion:
+//    - JSON 转换已添加基础支持。可以扩展以处理更多边缘情况或配置选项（例如处理 null）。
+//    - 可以添加对其他常见数据交换格式（如 XML、CSV 行）的转换支持。
+// 5. 连接池:
+//    - 对于需要高并发处理大量短连接请求的场景，实现或集成连接池（如 database/sql/driver 风格或自定义池）将显著提高性能和资源利用率。这通常是一个重要的架构决策。
+// 6. V3 API 结构体:
+//    - Value, Archive, Stat 结构体定义在 `api_v3.go` (假设)。可以考虑将它们移到更中心的位置（如 `types.go`）或在此文件中复制定义（如果 `api_v3.go` 不适合作为公共 API 的一部分）。
+
+// ====================================================================================
+// GORM Models (Based on provided schema)
+// 注意：这些模型定义是为了方便在项目中使用 GORM (如果适用)。
+// 当前的 opio.Client 使用自定义协议，无法直接使用 GORM。
+// ====================================================================================
+
+// GormPoint 对应数据库中的 'point' 表 (点表)
+type GormPoint struct {
+	ID int32     `gorm:"column:ID;primaryKey"`     // 点标识
+	UD int64     `gorm:"column:UD"`                // UUID
+	ND int32     `gorm:"column:ND"`                // 父节点标识
+	PT int8      `gorm:"column:PT"`                // 点的来源
+	RT int8      `gorm:"column:RT"`                // 点的类型
+	PN string    `gorm:"column:PN;type:char(32)"`  // 点名
+	AN string    `gorm:"column:AN;type:char(32)"`  // 别名
+	ED string    `gorm:"column:ED;type:char(60)"`  // 描述
+	KR string    `gorm:"column:KR;type:char(16)"`  // 特征字
+	SG []byte    `gorm:"column:SG;type:binary(4)"` // 安全组
+	FQ int16     `gorm:"column:FQ"`                // 分辨率
+	CP int16     `gorm:"column:CP"`                // 处理器
+	HW int32     `gorm:"column:HW"`                // 模块地址
+	BP int16     `gorm:"column:BP"`                // 通道号
+	LC int8      `gorm:"column:LC"`                // 报警类型
+	AP int8      `gorm:"column:AP"`                // 报警优先级
+	AR int8      `gorm:"column:AR"`                // 存档
+	FL int32     `gorm:"column:FL"`                // 标志位
+	ST string    `gorm:"column:ST;type:char(6)"`   // 值为 1 时的描述
+	RS string    `gorm:"column:RS;type:char(6)"`   // 值为 0 时的描述
+	EU string    `gorm:"column:EU;type:char(12)"`  // 单位
+	FM int16     `gorm:"column:FM"`                // 显示小数位
+	IV float32   `gorm:"column:IV"`                // 初始值
+	TV float32   `gorm:"column:TV"`                // 量程上限
+	BV float32   `gorm:"column:BV"`                // 量程下限
+	LL float32   `gorm:"column:LL"`                // 报警低限
+	HL float32   `gorm:"column:HL"`                // 报警高限
+	ZL float32   `gorm:"column:ZL"`                // 报警低 2 限
+	ZH float32   `gorm:"column:ZH"`                // 报警高 2 限
+	L3 float32   `gorm:"column:L3"`                // 报警低 3 限
+	H3 float32   `gorm:"column:H3"`                // 报警高 3 限
+	L4 float32   `gorm:"column:L4"`                // 报警低 4 限
+	H4 float32   `gorm:"column:H4"`                // 报警高 4 限
+	DB float32   `gorm:"column:DB"`                // 死区
+	DT int8      `gorm:"column:DT"`                // 死区类型
+	KZ int8      `gorm:"column:KZ"`                // 压缩类型
+	KT int8      `gorm:"column:KT"`                // 计算类型
+	KO int8      `gorm:"column:KO"`                // 计算顺序
+	CT time.Time `gorm:"column:CT"`                // 修改时间
+	EX string    `gorm:"column:EX"`                // 计算表达式
+	GN string    `gorm:"column:GN"`                // 全局名称
+}
+
+// TableName 指定 GormPoint 结构体对应的数据库表名
+func (GormPoint) TableName() string {
+	return "point"
+}
+
+// GormNode 对应数据库中的 'node' 表 (节点表)
+type GormNode struct {
+	ID int32     `gorm:"column:ID;primaryKey"`    // 点标识
+	UD int64     `gorm:"column:UD"`               // UUID
+	ND int32     `gorm:"column:ND"`               // 父节点标识
+	PN string    `gorm:"column:PN;type:char(24)"` // 名称
+	ED string    `gorm:"column:ED;type:char(60)"` // 描述
+	FQ int32     `gorm:"column:FQ"`               // 分辨率
+	LC int32     `gorm:"column:LC"`               // 报警类型
+	AR int8      `gorm:"column:AR"`               // 存档
+	OF int8      `gorm:"column:OF"`               // 离线
+	CT time.Time `gorm:"column:CT"`               // 修改时间
+	GN string    `gorm:"column:GN"`               // 全局名称
+}
+
+// TableName 指定 GormNode 结构体对应的数据库表名
+func (GormNode) TableName() string {
+	return "node"
+}
+
+// GormRealtime 对应数据库中的 'realtime' 表 (实时表)
+type GormRealtime struct {
+	ID int32     `gorm:"column:ID;primaryKey"` // 测点 ID (假设为主键)
+	GN string    `gorm:"column:GN"`            // 测点名称
+	TM time.Time `gorm:"column:TM"`            // 测点更新时间
+	DS int16     `gorm:"column:DS"`            // 测点状态
+	AV []byte    `gorm:"column:AV;type:blob"`  // 测点数值
+}
+
+// TableName 指定 GormRealtime 结构体对应的数据库表名
+func (GormRealtime) TableName() string {
+	return "realtime"
+}
+
+// GormArchive 对应数据库中的 'archive' 表 (历史表)
+type GormArchive struct {
+	ID int32     `gorm:"column:ID"`           // 测点 ID (可能与 TM 组成复合主键/索引)
+	GN string    `gorm:"column:GN"`           // 测点名称
+	TM time.Time `gorm:"column:TM"`           // 测点数据更新时间 (可能与 ID 组成复合主键/索引)
+	DS int16     `gorm:"column:DS"`           // 测点状态
+	AV []byte    `gorm:"column:AV;type:blob"` // 测点数值
+	// MODE, INTERVAL, QTYPE 被忽略，因为它们是 "hidden text"，可能表示查询参数
+}
+
+// TableName 指定 GormArchive 结构体对应的数据库表名
+func (GormArchive) TableName() string {
+	return "archive"
+}
+
+// GormStat 对应数据库中的 'stat' 表 (历史统计表)
+type GormStat struct {
+	ID      int32     `gorm:"column:ID"`      // 测点 ID (可能与 TM, INTERVAL 组成复合主键/索引)
+	GN      string    `gorm:"column:GN"`      // 测点名称
+	TM      time.Time `gorm:"column:TM"`      // 测点更新时间 (可能与 ID, INTERVAL 组成复合主键/索引)
+	DS      int16     `gorm:"column:DS"`      // 测点状态
+	FLOW    float64   `gorm:"column:FLOW"`    // 累积值
+	AVGV    float64   `gorm:"column:AVGV"`    // 时均平均值
+	MAXV    float64   `gorm:"column:MAXV"`    // 最大值
+	MINV    float64   `gorm:"column:MINV"`    // 最小值
+	MAXTIME time.Time `gorm:"column:MAXTIME"` // 最大值时间
+	MINTIME time.Time `gorm:"column:MINTIME"` // 最小值时间
+	// INTERVAL, QTYPE 被忽略，因为它们是 "hidden text"，可能表示查询参数
+}
+
+// TableName 指定 GormStat 结构体对应的数据库表名
+func (GormStat) TableName() string {
+	return "stat"
+}
+
+// GormAlarm 对应数据库中的 'alarm' 表 (实时报警表)
+type GormAlarm struct {
+	ID int32     `gorm:"column:ID"`           // 测点 ID (主键/索引待定)
+	GN string    `gorm:"column:GN"`           // 测点名称
+	RT int8      `gorm:"column:RT"`           // 测点类型
+	AL int8      `gorm:"column:AL"`           // 报警优先级
+	AC int32     `gorm:"column:AC"`           // 报警颜色
+	TF time.Time `gorm:"column:TF"`           // 首次报警时间
+	TA time.Time `gorm:"column:TA"`           // 报警时间 (主键/索引待定)
+	TM time.Time `gorm:"column:TM"`           // 测点更新时间 (主键/索引待定)
+	DS int16     `gorm:"column:DS"`           // 测点状态
+	AV []byte    `gorm:"column:AV;type:blob"` // 测点数值
+}
+
+// TableName 指定 GormAlarm 结构体对应的数据库表名
+func (GormAlarm) TableName() string {
+	return "alarm"
+}
+
+// GormAAlarm 对应数据库中的 'aalarm' 表 (历史报警表)
+type GormAAlarm struct {
+	ID int32     `gorm:"column:ID"`           // 测点 ID (主键/索引待定)
+	GN string    `gorm:"column:GN"`           // 测点名称
+	RT int8      `gorm:"column:RT"`           // 测点类型
+	AL int8      `gorm:"column:AL"`           // 报警优先级
+	AC int32     `gorm:"column:AC"`           // 报警颜色
+	TF time.Time `gorm:"column:TF"`           // 首次报警时间
+	TA time.Time `gorm:"column:TA"`           // 报警时间 (主键/索引待定)
+	TM time.Time `gorm:"column:TM"`           // 测点更新时间 (主键/索引待定)
+	DS int16     `gorm:"column:DS"`           // 测点状态
+	AV []byte    `gorm:"column:AV;type:blob"` // 测点数值
+}
+
+// TableName 指定 GormAAlarm 结构体对应的数据库表名
+func (GormAAlarm) TableName() string {
+	return "aalarm"
+}
+
+// GormUser 对应数据库中的 'user' 表 (用户表)
+type GormUser struct {
+	US string `gorm:"column:US;type:text;primaryKey"` // 用户信息 (假设为主键)
+	PW string `gorm:"column:PW;type:text"`            // 用户密码
+}
+
+// TableName 指定 GormUser 结构体对应的数据库表名
+func (GormUser) TableName() string {
+	return "user"
+}
+
+// GormGroup 对应数据库中的 'groups' 表 (资源组表)
+type GormGroup struct {
+	ID int    `gorm:"column:ID;primaryKey"` // 资源组 ID
+	GP string `gorm:"column:GP;type:text"`  // 资源组信息
+}
+
+// TableName 指定 GormGroup 结构体对应的数据库表名
+func (GormGroup) TableName() string {
+	return "groups"
+}
+
+// GormAccess 对应数据库中的 'access' 表 (权限表)
+type GormAccess struct {
+	US string `gorm:"column:US;type:text;primaryKey"` // 用户信息 (复合主键)
+	GP int    `gorm:"column:GP;primaryKey"`           // 资源组 (复合主键)
+	PL string `gorm:"column:PL;type:text"`            // 权限信息
+}
+
+// TableName 指定 GormAccess 结构体对应的数据库表名
+func (GormAccess) TableName() string {
+	return "access"
+}

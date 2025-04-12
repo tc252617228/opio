@@ -5,7 +5,6 @@
 package opio
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/tc252617228/opio/internal/utils"
@@ -46,13 +45,13 @@ func EncodeSliceBool(value []bool) (int, []byte) {
 		rawData[4] = byte(bodyLen)
 	default:
 		//logs.Error("bodyLen too long: %v", bodyLen)
-		fmt.Println("bodyLen too long: %v", bodyLen)
+		// fmt.Printf("bodyLen too long: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		return 0, nil
 	}
 
 	if rawData == nil || headLen == 0 {
 		//logs.Error("make head failed, bodyLen:%v", bodyLen)
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+		// fmt.Printf("make head failed, bodyLen: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		return 0, nil
 	}
 	offset := headLen
@@ -104,12 +103,12 @@ func EncodeSliceInt8(value []int8) (int, []byte) {
 		rawData[4] = byte(bodyLen)
 	default:
 		//logs.Error("bodyLen too long: %v", bodyLen)
-		fmt.Println("bodyLen too long: %v", bodyLen)
+		// fmt.Printf("bodyLen too long: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		return 0, nil
 	}
 
 	if rawData == nil || headLen == 0 {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+		// fmt.Printf("make head failed, bodyLen: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("make head failed, bodyLen:%v", bodyLen)
 		return 0, nil
 	}
@@ -162,12 +161,12 @@ func EncodeSliceInt16(value []int16) (int, []byte) {
 		rawData[4] = byte(bodyLen)
 	default:
 		//logs.Error("bodyLen too long: %v", bodyLen)
-		fmt.Println("bodyLen too long: %v", bodyLen)
+		// fmt.Printf("bodyLen too long: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		return 0, nil
 	}
 
 	if rawData == nil || headLen == 0 {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+		// fmt.Printf("make head failed, bodyLen: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("make head failed, bodyLen:%v", bodyLen)
 		return 0, nil
 	}
@@ -219,13 +218,13 @@ func EncodeSliceInt32(value []int32) (int, []byte) {
 		rawData[3] = byte(bodyLen >> 8)
 		rawData[4] = byte(bodyLen)
 	default:
-		fmt.Println("bodyLen too long: %v", bodyLen)
+		// fmt.Printf("bodyLen too long: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("bodyLen too long: %v", bodyLen)
 		return 0, nil
 	}
 
 	if rawData == nil || headLen == 0 {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+		// fmt.Printf("make head failed, bodyLen: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("make head failed, bodyLen:%v", bodyLen)
 		return 0, nil
 	}
@@ -277,13 +276,13 @@ func EncodeSliceInt64(value []int64) (int, []byte) {
 		rawData[3] = byte(bodyLen >> 8)
 		rawData[4] = byte(bodyLen)
 	default:
-		fmt.Println("bodyLen too long: %v", bodyLen)
+		// fmt.Printf("bodyLen too long: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("bodyLen too long: %v", bodyLen)
 		return 0, nil
 	}
 
 	if rawData == nil || headLen == 0 {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+		// fmt.Printf("make head failed, bodyLen: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("make head failed, bodyLen:%v", bodyLen)
 		return 0, nil
 	}
@@ -335,13 +334,13 @@ func EncodeSliceFloat32(value []float32) (int, []byte) {
 		rawData[3] = byte(bodyLen >> 8)
 		rawData[4] = byte(bodyLen)
 	default:
-		fmt.Println("bodyLen too long: %v", bodyLen)
+		// fmt.Printf("bodyLen too long: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("bodyLen too long: %v", bodyLen)
 		return 0, nil
 	}
 
 	if rawData == nil || headLen == 0 {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+		// fmt.Printf("make head failed, bodyLen: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("make head failed, bodyLen:%v", bodyLen)
 		return 0, nil
 	}
@@ -393,13 +392,13 @@ func EncodeSliceFloat64(value []float64) (int, []byte) {
 		rawData[3] = byte(bodyLen >> 8)
 		rawData[4] = byte(bodyLen)
 	default:
-		fmt.Println("bodyLen too long: %v", bodyLen)
+		// fmt.Printf("bodyLen too long: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("bodyLen too long: %v", bodyLen)
 		return 0, nil
 	}
 
 	if rawData == nil || headLen == 0 {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+		// fmt.Printf("make head failed, bodyLen: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("make head failed, bodyLen:%v", bodyLen)
 		return 0, nil
 	}
@@ -451,13 +450,13 @@ func EncodeSliceDateTime(value []time.Time) (int, []byte) {
 		rawData[3] = byte(bodyLen >> 8)
 		rawData[4] = byte(bodyLen)
 	default:
-		fmt.Println("bodyLen too long: %v", bodyLen)
+		// fmt.Printf("bodyLen too long: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("bodyLen too long: %v", bodyLen)
 		return 0, nil
 	}
 
 	if rawData == nil || headLen == 0 {
-		fmt.Println("make head failed, bodyLen:%v", bodyLen)
+		// fmt.Printf("make head failed, bodyLen: %v\n", bodyLen) // 使用 Printf 并添加换行符
 		//logs.Error("make head failed, bodyLen:%v", bodyLen)
 		return 0, nil
 	}

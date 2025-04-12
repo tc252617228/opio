@@ -30,7 +30,7 @@ func (set *OPDataSet) Close() {
 		err := set.io.SkipAll()
 		if err != nil {
 			//logs.Error("err >>>>>>>", err)
-			fmt.Println("err >>>>>>>", err)
+			// fmt.Println("err >>>>>>>", err) // 注释掉打印
 		}
 		set.table = nil
 		set.rowBuf = nil
@@ -117,7 +117,8 @@ func (set *OPDataSet) GetValue(col uint32) (value interface{}, err error) {
 	case VtSlice:
 		raw, err := set.GetBytes(col)
 		if nil == err {
-			o := DecodeSlice(raw)
+			// Handle error from DecodeSlice, ignore for getter simplicity
+			o, _ := DecodeSlice(raw)
 			if o != nil {
 				return o, nil
 			} else {
@@ -129,7 +130,8 @@ func (set *OPDataSet) GetValue(col uint32) (value interface{}, err error) {
 	case VtMap:
 		raw, err := set.GetBytes(col)
 		if nil == err {
-			o := DecodeMap(raw)
+			// Handle error from DecodeMap, ignore for getter simplicity
+			o, _ := DecodeMap(raw)
 			if o != nil {
 				return o, nil
 			} else {
@@ -141,7 +143,8 @@ func (set *OPDataSet) GetValue(col uint32) (value interface{}, err error) {
 	case VtStructure:
 		raw, err := set.GetBytes(col)
 		if nil == err {
-			o := DecodeStructure(raw)
+			// Handle error from DecodeStructure, ignore for getter simplicity
+			o, _ := DecodeStructure(raw)
 			if o != nil {
 				return o, nil
 			} else {
@@ -187,7 +190,8 @@ func (set *OPDataSet) GetValueExt(col uint32) (value interface{}, isObj bool, er
 	case VtSlice:
 		raw, err := set.GetBytes(col)
 		if nil == err {
-			o := DecodeSlice(raw)
+			// Handle error from DecodeSlice, ignore for getter simplicity
+			o, _ := DecodeSlice(raw)
 			if o != nil {
 				return o, false, nil
 			} else {
@@ -199,7 +203,8 @@ func (set *OPDataSet) GetValueExt(col uint32) (value interface{}, isObj bool, er
 	case VtMap:
 		raw, err := set.GetBytes(col)
 		if nil == err {
-			o := DecodeMap(raw)
+			// Handle error from DecodeMap, ignore for getter simplicity
+			o, _ := DecodeMap(raw)
 			if o != nil {
 				return o, false, nil
 			} else {
@@ -211,7 +216,8 @@ func (set *OPDataSet) GetValueExt(col uint32) (value interface{}, isObj bool, er
 	case VtStructure:
 		raw, err := set.GetBytes(col)
 		if nil == err {
-			o := DecodeStructure(raw)
+			// Handle error from DecodeStructure, ignore for getter simplicity
+			o, _ := DecodeStructure(raw)
 			if o != nil {
 				return o, false, nil
 			} else {
@@ -403,7 +409,8 @@ func (set *OPDataSet) GetBool(col uint32) (bool, error) {
 		case VtSlice:
 			v, err := set.GetBytes(col)
 			if nil == err {
-				o := DecodeSlice(v)
+				// Handle error from DecodeSlice, ignore for getter simplicity
+				o, _ := DecodeSlice(v)
 				return o != nil && !o.IsEmpty(), err
 			} else {
 				return false, err
@@ -411,7 +418,8 @@ func (set *OPDataSet) GetBool(col uint32) (bool, error) {
 		case VtMap:
 			v, err := set.GetBytes(col)
 			if nil == err {
-				o := DecodeMap(v)
+				// Handle error from DecodeMap, ignore for getter simplicity
+				o, _ := DecodeMap(v)
 				return o != nil && !o.IsEmpty(), err
 			} else {
 				return false, err
@@ -419,7 +427,8 @@ func (set *OPDataSet) GetBool(col uint32) (bool, error) {
 		case VtStructure:
 			v, err := set.GetBytes(col)
 			if nil == err {
-				o := DecodeStructure(v)
+				// Handle error from DecodeStructure, ignore for getter simplicity
+				o, _ := DecodeStructure(v)
 				return o != nil && !o.IsEmpty(), err
 			} else {
 				return false, err
@@ -1013,7 +1022,8 @@ func (set *OPDataSet) GetString(col uint32) (string, error) {
 		case VtSlice:
 			v, err := set.GetBytes(col)
 			if nil == err {
-				o := DecodeSlice(v)
+				// Handle error from DecodeSlice, ignore for getter simplicity
+				o, _ := DecodeSlice(v)
 				if o != nil {
 					return o.String(false), nil
 				} else {
@@ -1025,7 +1035,8 @@ func (set *OPDataSet) GetString(col uint32) (string, error) {
 		case VtMap:
 			v, err := set.GetBytes(col)
 			if nil == err {
-				o := DecodeMap(v)
+				// Handle error from DecodeMap, ignore for getter simplicity
+				o, _ := DecodeMap(v)
 				if o != nil {
 					return o.String(false), nil
 				} else {
@@ -1037,7 +1048,8 @@ func (set *OPDataSet) GetString(col uint32) (string, error) {
 		case VtStructure:
 			v, err := set.GetBytes(col)
 			if nil == err {
-				o := DecodeStructure(v)
+				// Handle error from DecodeStructure, ignore for getter simplicity
+				o, _ := DecodeStructure(v)
 				if o != nil {
 					return o.String(false), nil
 				} else {

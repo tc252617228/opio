@@ -78,7 +78,7 @@ const (
 func (value *Value) Read(io *utils.Buffer) (err error) {
 	value.RT, _ = io.GetInt8()
 	if value.RT == -1 {
-		_, err = io.GetInt32() // N/A
+		_, err = io.GetInt32() // 无效值标记
 	} else {
 		value.TM, _ = io.GetInt32()
 		value.DS, _ = io.GetInt16()
@@ -238,7 +238,7 @@ func (a *Archive) Read(io *utils.Buffer) (err error) {
 				err = v[i].ReadR8(io)
 			}
 		default:
-			err = fmt.Errorf("ArchiveRead invalid type %d", a.Type)
+			err = fmt.Errorf("读取归档数据时无效的类型 %d", a.Type)
 		}
 		a.Data = v
 	}
@@ -366,21 +366,21 @@ func (op *IOConnect) ReadRealtime(v []Value) (err error) {
 	magic, err = io.GetInt32()
 	if magic != MAGIC || err != nil {
 		if err == nil {
-			err = fmt.Errorf("get realtime error magic=%d", magic)
+			err = fmt.Errorf("读取实时数据错误，magic=%d", magic)
 		}
 		return err
 	}
-	_, _ = io.GetInt32()     // flag
-	size, _ := io.GetInt32() // count
+	_, _ = io.GetInt32()     // 标志
+	size, _ := io.GetInt32() // 数量
 	if size != int32(count) {
-		err = fmt.Errorf("get realtime error count=%d, expected=%d", size, count)
+		err = fmt.Errorf("读取实时数据错误，数量=%d，期望=%d", size, count)
 	}
 	for i := 0; i < count && err == nil; i++ {
 		err = v[i].Read(io)
 	}
 	magic, err = io.GetInt32()
 	if magic != MAGIC && err == nil {
-		err = fmt.Errorf("get realtime error magic=%d", magic)
+		err = fmt.Errorf("读取实时数据错误，magic=%d", magic)
 	}
 	return err
 }
@@ -410,7 +410,7 @@ func (op *IOConnect) WriteRealtime(v []Value) (err error) {
 	var echo int8
 	echo, err = io.ReadEcho()
 	if echo != 0 {
-		err = fmt.Errorf("WriteReal error %d", int32(echo))
+		err = fmt.Errorf("写入实时数据错误 %d", int32(echo))
 	}
 	return err
 }
@@ -443,7 +443,7 @@ func (op *IOConnect) WriteArchive(v []*Archive, cache bool) (err error) {
 	var echo int8
 	echo, err = io.ReadEcho()
 	if echo != 0 {
-		err = fmt.Errorf("WriteArchive error %d", int32(echo))
+		err = fmt.Errorf("写入归档数据错误 %d", int32(echo))
 	}
 	return err
 }
@@ -495,15 +495,15 @@ func (q *ArchiveQuery) Begin() (err error) {
 		rowCount, err = io.GetInt32()
 	}
 	if magic != MAGIC || rowCount != int32(count) {
-		err = fmt.Errorf("ArchiveBegin error head %d,%d,%d", magic, flag, rowCount)
+		err = fmt.Errorf("开始读取归档数据错误，头部信息 %d,%d,%d", magic, flag, rowCount)
 	}
 	return err
 }
 
-// Next -
+// Next - 读取下一个归档数据块
 func (q *ArchiveQuery) Next() (ar *Archive, err error) {
 	if q.mode&ModeStatMask != 0 {
-		err = fmt.Errorf("ArchiveQuery is stat mode")
+		err = fmt.Errorf("ArchiveQuery 当前为统计模式，请使用 NextStat")
 		return nil, err
 	}
 
@@ -511,53 +511,79 @@ func (q *ArchiveQuery) Next() (ar *Archive, err error) {
 	var next int8
 	io := q.io
 	next, err = io.GetInt8()
+	if err != nil {
+		return nil, err // 检查 GetInt8 的错误
+	}
 	if next == 1 {
 		ar = &Archive{}
-		index, err = io.GetUint32()
+		index, err = io.GetUint32() // 读取索引
+		if err != nil {             // 首先检查读取索引的错误
+			return nil, err
+		}
+		// 索引读取成功，现在检查索引是否越界
 		if index >= uint32(len(q.ids)) {
-			err = fmt.Errorf("ArchiveQuery index %d out of range", index)
+			err = fmt.Errorf("ArchiveQuery 索引 %d 超出范围", index)
 		} else {
+			// 索引有效，读取归档数据
 			ar.ID = q.ids[index]
-			err = ar.Read(io)
+			err = ar.Read(io) // 读取归档数据，此处的 err 会被最终返回
 		}
 	} else {
-		magic, e := io.GetInt32()
-		err = e
-		if magic != MAGIC && e == nil {
-			err = fmt.Errorf("ArchiveEnd error tail %d", magic)
+		magic, e := io.GetInt32() // 读取结束标记
+		if e != nil {
+			err = e // 如果读取结束标记出错，则返回该错误
+		} else if magic != MAGIC {
+			// 如果读取成功但结束标记不正确，则构造错误信息
+			err = fmt.Errorf("结束读取归档数据错误，尾部标识 %d", magic)
 		}
+		// 如果 e == nil 且 magic == MAGIC，则 err 保持为 nil，表示正常结束
 	}
 	return ar, err
 }
 
-// NextStat -
+// NextStat - 读取下一个统计数据块
 func (q *ArchiveQuery) NextStat() (st *Stat, err error) {
 	if q.mode&ModeStatMask == 0 {
-		err = fmt.Errorf("ArchiveQuery is not stat mode")
+		err = fmt.Errorf("ArchiveQuery 当前非统计模式，请使用 Next")
 		return nil, err
 	}
 
 	var index uint32
 	var next int8
 	io := q.io
-	next, err = io.GetInt8()
-	if next == 1 {
-		st = &Stat{}
-		index, err = io.GetUint32()
-		if index >= uint32(len(q.ids)) {
-			err = fmt.Errorf("ArchiveQuery index %d out of range", index)
-		} else {
-			st.ID = q.ids[index]
-			err = st.Read(io, q.mode)
-		}
-	} else {
-		magic, e := io.GetInt32()
-		err = e
-		if magic != MAGIC && e == nil {
-			err = fmt.Errorf("ArchiveEnd error tail %d", magic)
-		}
+	next, err = io.GetInt8() // 读取下一个块标识
+	if err != nil {
+		return nil, err // 首先检查 GetInt8 的错误
 	}
-	return st, err
+
+	if next == 1 { // 还有数据块
+		st = &Stat{}
+		index, err = io.GetUint32() // 读取数据块对应的 ID 索引
+		if err != nil {
+			return nil, err // 检查 GetUint32 的错误
+		}
+
+		// 检查索引是否越界
+		if index >= uint32(len(q.ids)) {
+			err = fmt.Errorf("ArchiveQuery 索引 %d 超出范围", index)
+			return nil, err // 索引越界，返回错误
+		}
+
+		// 索引有效，读取统计数据
+		st.ID = q.ids[index]
+		err = st.Read(io, q.mode) // 读取数据，此操作的 err 会在最后返回
+	} else { // 没有更多数据块了 (next != 1)
+		// 读取结束标记
+		magic, e := io.GetInt32()
+		if e != nil {
+			err = e // 如果读取结束标记出错，则返回该错误
+		} else if magic != MAGIC {
+			// 如果读取成功但结束标记不正确，则构造错误信息
+			err = fmt.Errorf("结束读取归档数据错误，尾部标识 %d", magic)
+		}
+		// 如果 e == nil 且 magic == MAGIC，则 err 保持为 nil，表示正常结束
+	}
+	return st, err // 返回读取到的 Stat (如果 next == 1) 和最终的错误状态
 }
 
 // ReadArchive -
@@ -573,7 +599,7 @@ func (op *IOConnect) ReadArchive(ids []int32, mode int32, begin, end time.Time, 
 			result = append(result, ar)
 		}
 		if ar == nil {
-			break // EOF
+			break // 数据结束
 		}
 	}
 	return result, nil
@@ -592,7 +618,7 @@ func (op *IOConnect) ReadStat(ids []int32, mode int32, begin, end time.Time, int
 			result = append(result, st)
 		}
 		if st == nil {
-			break // EOF
+			break // 数据结束
 		}
 	}
 	return result, nil

@@ -2,7 +2,6 @@ package opio
 
 import (
 	"errors"
-	"fmt"
 	"math/rand"
 	"time"
 )
@@ -245,7 +244,7 @@ func (sub *Subscribe) change(key interface{}, changeType int) error {
 		_ = sub.Write()
 		sub.Flush()
 	} else {
-		fmt.Println("not conn")
+		// fmt.Println("not conn") // 注释掉调试信息
 	}
 	return nil
 }

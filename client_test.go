@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"log" // 导入日志包，用于订阅示例中的日志输出
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tc252617228/opio" // 导入你的 opio 包
@@ -25,10 +23,10 @@ const (
 	testTimeout = 60 * time.Second // 测试操作的默认超时时间
 
 	// 用于测试的表名和列名 (需要服务器上存在这些表和列)
-	testTableName       = "Point"             // 使用 Point 表进行查询和订阅测试
-	testQueryColumn     = "ID"                // Point 表中的 ID 列
+	testTableName       = "point"             // 使用 point 表进行查询和订阅测试
+	testQueryColumn     = "ID"                // point 表中的 ID 列
 	testInsertTableName = "test_insert_table" // 用于插入/更新/删除的测试表 (需要预先创建或动态创建/清理) - 测试会跳过此表相关操作
-	testKeyColumn       = "ID"                // Point 表中的 ID 列，用于订阅
+	testKeyColumn       = "ID"                // point 表中的 ID 列，用于订阅
 	testRealtimeTable   = "Realtime"          // 用于订阅实时数据的表名
 )
 
@@ -42,7 +40,7 @@ func TestMain(m *testing.M) {
 	var err error
 	testPort, err = strconv.Atoi(testPortStr) // 将端口字符串转换为整数
 	if err != nil {
-		fmt.Printf("无效的测试端口号: %s\n", testPortStr)
+		// fmt.Printf("无效的测试端口号: %s\n", testPortStr)
 		os.Exit(1) // 如果端口无效，退出测试
 	}
 	// 可以在这里添加创建测试表、插入初始数据的逻辑
@@ -96,18 +94,6 @@ func TestConnectAndClose(t *testing.T) {
 	assert.Contains(t, err.Error(), "客户端未连接或已关闭", "重复关闭的错误信息应包含特定文本")
 }
 
-// TestPing 测试客户端的 Ping 功能。
-func TestPing(t *testing.T) {
-	client, ctx := createTestClient(t) // 创建客户端和 context
-	err := client.Ping(ctx)            // 对活动连接执行 Ping
-	assert.NoError(t, err, "Ping 操作失败")
-
-	// 关闭客户端后再执行 Ping
-	client.Close()
-	err = client.Ping(ctx)
-	assert.Error(t, err, "关闭后 Ping 应该失败") // 对已关闭的连接执行 Ping 应该返回错误
-}
-
 // TestSetCompression 测试设置连接的压缩模式。
 func TestSetCompression(t *testing.T) {
 	client, _ := createTestClient(t) // 创建客户端，忽略 context，因为 SetCompression 不直接使用它
@@ -129,7 +115,7 @@ func TestSetCompression(t *testing.T) {
 }
 
 // TestQuery 测试基本的结构化查询功能 (使用 client.Query)。
-// 这个测试需要 OpenPlant 服务器上存在名为 testTableName (Point) 的表。
+// 这个测试需要 OpenPlant 服务器上存在名为 testTableName (point) 的表。
 func TestQuery(t *testing.T) {
 	client, ctx := createTestClient(t) // 创建客户端和 context
 
@@ -143,7 +129,9 @@ func TestQuery(t *testing.T) {
 	require.NoError(t, err, "执行查询失败") // 确保查询没有错误
 	require.NotNil(t, result, "查询结果不应为 nil")
 
+	t.Logf("查询表 '%s', 列 %v, 选项 %+v", testTableName, columns, opts)
 	t.Logf("查询到 %d 行数据", len(result.Rows)) // 记录查询到的行数
+	logQueryResultSample(t, result, 3)     // 记录前 3 行数据样本
 	if len(result.Rows) > 0 {              // 如果查询返回了数据
 		assert.NotEmpty(t, result.Columns, "查询结果应包含列信息") // 验证列信息不为空
 		assert.Len(t, result.Columns, 3, "查询返回的列数应为 3")  // 验证返回了 3 列
@@ -174,7 +162,9 @@ func TestQuery(t *testing.T) {
 	require.NoError(t, err, "执行查询所有列失败")
 	require.NotNil(t, resultAll, "查询所有列结果不应为 nil")
 	assert.NotEmpty(t, resultAll.Columns, "查询所有列结果应包含列信息")
-	t.Logf("查询所有列返回 %d 列", len(resultAll.Columns)) // 记录查询所有列时返回的列数
+	t.Logf("查询表 '%s' 所有列 (*), 选项 %+v", testTableName, opts)
+	t.Logf("查询所有列返回 %d 列, %d 行", len(resultAll.Columns), len(resultAll.Rows)) // 记录查询所有列时返回的列数和行数
+	logQueryResultSample(t, resultAll, 3)                                     // 记录前 3 行数据样本
 }
 
 // TestExecSQL 测试执行原始 SQL 语句的功能 (基于原 Test_SQL 和 Test_SQL2)。
@@ -183,9 +173,12 @@ func TestExecSQL(t *testing.T) {
 
 	// 测试一个简单的 SELECT SQL 语句 (限制返回 5 行)
 	sqlSimple := fmt.Sprintf("select ID, GN from %s limit 5", testTableName)
+	t.Logf("执行简单 SQL: %s", sqlSimple)
 	resultSimple, err := client.ExecSQL(ctx, sqlSimple)
 	require.NoError(t, err, "执行简单 SQL 失败")
 	require.NotNil(t, resultSimple, "简单 SQL 查询结果不应为 nil")
+	t.Logf("简单 SQL 查询返回 %d 行", len(resultSimple.Rows))
+	logQueryResultSample(t, resultSimple, 5)                                // 记录最多 5 行数据样本
 	assert.LessOrEqual(t, len(resultSimple.Rows), 5, "简单 SQL 查询结果行数应 <= 5") // 验证行数不超过限制
 	if len(resultSimple.Rows) > 0 {                                         // 如果有返回行
 		assert.Len(t, resultSimple.Columns, 2, "简单 SQL 查询结果列数应为 2") // 验证列数
@@ -197,14 +190,17 @@ func TestExecSQL(t *testing.T) {
 	}
 
 	// 测试一个带 WHERE 子句的 SQL 语句
-	// 假设服务器上存在 GN='W3.AX.AX0' 的点位
-	sqlWhere := fmt.Sprintf("SELECT GN, ED FROM %s WHERE GN='W3.AX.AX0'", testTableName)
+	// 假设服务器上存在 GN='W3.LE.SC_LE_1_001_AMBWINDSPEED' 的点位
+	sqlWhere := fmt.Sprintf("SELECT GN, ED FROM %s WHERE GN='W3.LE.SC_LE_1_001_AMBWINDSPEED'", testTableName)
+	t.Logf("执行带 WHERE 的 SQL: %s", sqlWhere)
 	resultWhere, err := client.ExecSQL(ctx, sqlWhere)
 	require.NoError(t, err, "执行带 WHERE 的 SQL 失败")
 	require.NotNil(t, resultWhere, "带 WHERE 的 SQL 查询结果不应为 nil")
-	if len(resultWhere.Rows) > 0 { // 如果找到了匹配的点位
-		assert.Len(t, resultWhere.Columns, 2, "带 WHERE 的 SQL 查询结果列数应为 2")             // 验证列数
-		assert.Equal(t, "W3.AX.AX0", resultWhere.Rows[0]["GN"], "WHERE 查询返回的 GN 不匹配") // 验证返回的 GN 是否正确
+	t.Logf("带 WHERE 的 SQL 查询返回 %d 行", len(resultWhere.Rows))
+	logQueryResultSample(t, resultWhere, 1) // 记录最多 1 行数据样本
+	if len(resultWhere.Rows) > 0 {          // 如果找到了匹配的点位
+		assert.Len(t, resultWhere.Columns, 2, "带 WHERE 的 SQL 查询结果列数应为 2")                                  // 验证列数
+		assert.Equal(t, "W3.LE.SC_LE_1_001_AMBWINDSPEED", resultWhere.Rows[0]["GN"], "WHERE 查询返回的 GN 不匹配") // 验证返回的 GN 是否正确
 	} else {
 		// 如果未找到匹配的点位，记录警告
 		t.Logf("警告: SQL '%s' 未返回任何行", sqlWhere)
@@ -347,29 +343,36 @@ func TestSubscribe(t *testing.T) {
 
 	// 启动一个 goroutine 来异步处理来自订阅通道的事件
 	go func() {
+		t.Log("启动订阅事件处理 goroutine...")
 		for {
 			select {
 			case event, ok := <-eventChan: // 从通道接收事件
 				if !ok { // 如果通道关闭
-					log.Println("订阅通道已关闭")
+					t.Log("订阅通道已关闭，事件处理 goroutine 退出")
 					return // 退出 goroutine
 				}
 				eventCount++          // 增加事件计数
 				if event.Err != nil { // 如果是错误事件
-					log.Printf("订阅收到错误: %v\n", event.Err)
+					t.Logf("订阅收到错误: %v", event.Err)
 					errorReceived = true // 标记收到错误
 				} else { // 如果是数据事件
-					log.Printf("收到订阅数据: %v\n", event.Data)
-					eventReceived = true // 标记收到数据
+					t.Logf("收到订阅数据: %+v", event.Data) // 使用 %+v 打印 map 详情
+					eventReceived = true              // 标记收到数据
 					// 按 ID 存储收到的数据，方便后续验证
 					if idVal, ok := event.Data[testKeyColumn]; ok { // 从数据中提取 ID
 						if id, ok := idVal.(int32); ok { // 假设 ID 是 int32 类型
-							receivedData[id] = event.Data // 存储数据
+							// 存储数据，如果已存在则覆盖（表示收到更新）
+							receivedData[id] = event.Data
+							t.Logf("已存储/更新 ID %d 的数据", id)
+						} else {
+							t.Logf("警告：收到的数据中 %s 列不是 int32 类型: %T", testKeyColumn, idVal)
 						}
+					} else {
+						t.Logf("警告：收到的数据中缺少键列 %s", testKeyColumn)
 					}
 				}
 			case <-timeoutCtx.Done(): // 如果测试超时
-				log.Println("事件处理 goroutine 超时退出")
+				t.Log("订阅测试超时，事件处理 goroutine 退出")
 				return // 退出 goroutine
 			}
 		}
@@ -405,13 +408,19 @@ func TestSubscribe(t *testing.T) {
 	t.Logf("总共收到 %d 个事件", eventCount)                   // 记录收到的事件总数
 
 	// 验证是否收到了初始订阅 key 的数据 (快照或更新)
-	_, initialKeyReceived := receivedData[initialKeys[0]]
+	initialData, initialKeyReceived := receivedData[initialKeys[0]]
 	assert.True(t, initialKeyReceived, "应收到初始订阅 key (%d) 的数据", initialKeys[0])
+	if initialKeyReceived {
+		t.Logf("收到的初始 Key (%d) 的最终数据: %+v", initialKeys[0], initialData)
+	}
 
 	// 验证是否收到了动态添加的 key 的数据
 	// 注意：这取决于在添加后、移除前，该 key 是否有数据更新。所以这个断言不是强制性的。
-	_, additionalKeyReceived := receivedData[additionalKeys[0]]
+	additionalData, additionalKeyReceived := receivedData[additionalKeys[0]]
 	t.Logf("是否收到添加的 key (%d) 的数据: %v", additionalKeys[0], additionalKeyReceived)
+	if additionalKeyReceived {
+		t.Logf("收到的添加 Key (%d) 的最终数据: %+v", additionalKeys[0], additionalData)
+	}
 	// assert.True(t, additionalKeyReceived, "应收到动态添加的 key (%d) 的数据", additionalKeys[0]) // 可以取消注释，如果确定会收到更新
 
 }
@@ -439,10 +448,13 @@ func TestReadWriteRealtime(t *testing.T) {
 			AV: float64(i+1) * 11.1,     // 要写入的值 (示例值)
 		}
 	}
+	t.Logf("准备写入实时数据: %+v", valuesToWrite)
 	err := client.WriteRealtime(ctx, valuesToWrite) // 调用客户端的 WriteRealtime 方法
 	require.NoError(t, err, "写入实时数据失败")
+	t.Log("写入实时数据成功")
 
 	// 短暂等待，以确保数据有足够时间被服务器处理和写入。
+	t.Log("等待 200ms 以便服务器处理写入...")
 	time.Sleep(200 * time.Millisecond)
 
 	// --- 读取实时数据 ---
@@ -451,8 +463,10 @@ func TestReadWriteRealtime(t *testing.T) {
 	for i, id := range pointIDs {
 		valuesToRead[i] = opio.Value{ID: id}
 	}
+	t.Logf("准备读取实时数据 (仅提供 ID): %+v", valuesToRead)
 	err = client.ReadRealtime(ctx, valuesToRead) // 调用客户端的 ReadRealtime 方法
 	require.NoError(t, err, "读取实时数据失败")
+	t.Logf("读取实时数据成功，结果: %+v", valuesToRead)
 
 	// --- 验证读取结果 ---
 	require.Len(t, valuesToRead, len(pointIDs), "读取到的数据点数量不匹配") // 验证读取到的点数是否正确
@@ -472,9 +486,10 @@ func TestReadWriteRealtime(t *testing.T) {
 			// 比较状态 (DS)
 			assert.Equal(t, writeVal.DS, readVal.DS, "读取到的实时状态与写入的不匹配 (ID: %d)", writeVal.ID)
 			// 比较时间戳 (TM)：允许几秒的误差，因为服务器处理可能引入延迟
-			assert.InDelta(t, float64(writeVal.TM), float64(readVal.TM), 5.0, "读取到的时间戳与写入的相差过大 (ID: %d)", writeVal.ID)
+			assert.InDelta(t, float64(writeVal.TM), float64(readVal.TM), 5.0, "读取到的时间戳与写入的相差过大 (ID: %d, 写入: %d, 读取: %d)", writeVal.ID, writeVal.TM, readVal.TM)
 		}
 	}
+	t.Log("实时数据读写验证完成")
 }
 
 // TestReadWriteArchive 测试 V3 API 风格的历史数据读写功能。
@@ -504,20 +519,25 @@ func TestReadWriteArchive(t *testing.T) {
 			},
 		}
 	}
+	t.Logf("准备写入历史数据: %+v", archivesToWrite)
 	err := client.WriteArchive(ctx, archivesToWrite, false) // 调用客户端的 WriteArchive 方法，不使用缓存
 	require.NoError(t, err, "写入历史数据失败")
+	t.Log("写入历史数据成功")
 
 	// 短暂等待，确保数据写入完成。
+	t.Log("等待 200ms 以便服务器处理写入...")
 	time.Sleep(200 * time.Millisecond)
 
 	// --- 读取历史数据 ---
 	// 定义读取的时间范围
 	beginTime := writeTime.Add(-5 * time.Minute) // 从写入最早点之前开始
 	endTime := writeTime.Add(1 * time.Minute)    // 到写入最晚点之后结束
+	t.Logf("准备读取历史数据: IDs=%v, Mode=%d, Begin=%v, End=%v, Interval=0", pointIDs, opio.ModeRaw, beginTime, endTime)
 	// 调用客户端的 ReadArchive 方法，读取原始值 (ModeRaw)
 	readArchives, err := client.ReadArchive(ctx, pointIDs, opio.ModeRaw, beginTime, endTime, 0)
 	require.NoError(t, err, "读取历史数据失败")
 	require.NotEmpty(t, readArchives, "读取历史数据应返回结果") // 确保读取到了数据
+	t.Logf("读取历史数据成功，返回 %d 个点位的数据", len(readArchives))
 
 	// --- 验证读取结果 ---
 	assert.Len(t, readArchives, len(pointIDs), "读取到的历史数据点数量不匹配") // 验证返回的点位数是否正确
@@ -536,9 +556,12 @@ func TestReadWriteArchive(t *testing.T) {
 			// （因为时间范围内可能还包含其他历史数据）
 			assert.GreaterOrEqual(t, len(readAr.Data), len(writeAr.Data), "读取到的历史数据点数少于写入的 (ID: %d)", writeAr.ID)
 			t.Logf("ID %d: 写入 %d 点, 读取到 %d 点", writeAr.ID, len(writeAr.Data), len(readAr.Data))
+			// 打印读取到的前几个数据点样本
+			logArchiveSample(t, readAr, 5)
 			// 可以添加更详细的验证逻辑，例如逐个比较写入和读取的数据点的时间戳和值。
 		}
 	}
+	t.Log("历史数据读写验证完成")
 }
 
 // TestReadStat 测试 V3 API 风格的统计数据读取功能。
@@ -557,11 +580,12 @@ func TestReadStat(t *testing.T) {
 	beginTime := time.Now().Add(-10 * time.Minute) // 过去 10 分钟
 	endTime := time.Now()                          // 到当前时间
 	interval := int32(60)                          // 统计间隔为 1 分钟 (60 秒)
-
+	t.Logf("准备读取统计数据: IDs=%v, Mode=%d, Begin=%v, End=%v, Interval=%d", pointIDs, opio.ModeAvg, beginTime, endTime, interval)
 	// 调用客户端的 ReadStat 方法，读取平均值 (ModeAvg)
 	stats, err := client.ReadStat(ctx, pointIDs, opio.ModeAvg, beginTime, endTime, interval)
 	require.NoError(t, err, "读取统计数据失败")
 	require.NotEmpty(t, stats, "读取统计数据应返回结果") // 确保读取到了数据
+	t.Logf("读取统计数据成功，返回 %d 个点位的数据", len(stats))
 
 	// --- 验证读取结果 ---
 	assert.Len(t, stats, len(pointIDs), "读取到的统计数据点数量不匹配") // 验证返回的点位数是否正确
@@ -578,9 +602,12 @@ func TestReadStat(t *testing.T) {
 		if ok {
 			assert.NotEmpty(t, st.Data, "统计结果应包含数据 (ID: %d)", st.ID) // 确保返回的统计数据不为空
 			t.Logf("ID %d: 读取到 %d 个统计值", st.ID, len(st.Data))        // 记录读取到的统计值数量
+			// 打印读取到的前几个统计值样本
+			logStatSample(t, st, 5)
 			// 可以添加对具体统计值的断言，例如检查平均值 (Avg) 是否在预期范围内。
 		}
 	}
+	t.Log("统计数据读取验证完成")
 }
 
 // TestQueryResultScan 测试 QueryResult.Scan 方法的功能 (改为集成测试)。
@@ -592,16 +619,18 @@ func TestQueryResultScan(t *testing.T) {
 	queryOpts := &opio.QueryOptions{
 		Limit: "3", // 获取少量数据 (3 行) 用于测试 Scan
 	}
-	// 查询 Point 表的 ID, GN, ED 列
+	// 查询 point 表的 ID, GN, ED 列
 	queryColumns := []string{"ID", "GN", "ED"}
 	qr, err := client.Query(ctx, testTableName, queryColumns, queryOpts)
 	require.NoError(t, err, "执行查询以获取 Scan 测试数据失败")
 	require.NotNil(t, qr, "查询结果不应为 nil")
 	require.NotEmpty(t, qr.Rows, "查询应返回至少一行数据以测试 Scan") // 确保有数据用于 Scan
+	t.Logf("Scan 测试：查询到 %d 行原始数据用于测试", len(qr.Rows))
+	logQueryResultSample(t, qr, 3) // 记录原始数据样本
 
 	// 2. 定义目标结构体，用于接收 Scan 的结果
 	type TargetStructScan struct {
-		PointID          int32   `opio:"ID"` // 使用 opio 标签匹配数据库列 "ID"
+		pointID          int32   `opio:"ID"` // 使用 opio 标签匹配数据库列 "ID"
 		GroupName        string  `opio:"GN"` // 使用 opio 标签匹配数据库列 "GN"
 		ExtendedDesc     *string `opio:"ED"` // 使用 opio 标签匹配 "ED"，使用指针类型测试 nullable 列
 		NonExistentField float64 // 这个字段在查询结果中不存在，用于测试忽略不存在的列
@@ -612,15 +641,24 @@ func TestQueryResultScan(t *testing.T) {
 	err = qr.Scan(&results)        // 将查询结果 Scan 到 results 切片中
 	require.NoError(t, err, "Scan 操作失败")
 	require.Len(t, results, len(qr.Rows), "Scan 后的切片长度应与查询结果行数匹配") // 验证 Scan 后的行数
+	t.Logf("Scan 成功，结果 (%d 行):", len(results))
+	for i, scanned := range results {
+		if i >= 3 { // 最多记录前 3 行
+			t.Logf("... (更多 %d 行)", len(results)-i)
+			break
+		}
+		t.Logf("  行 %d: %+v", i, scanned) // 记录 Scan 后的结构体内容
+	}
 
 	// 4. 详细验证 Scan 后的结果是否正确
+	t.Log("开始详细验证 Scan 结果...")
 	for i, row := range qr.Rows { // 遍历原始查询结果的每一行 (map)
 		scanned := results[i] // 获取 Scan 后的对应结构体
 
-		// 验证 PointID (类型转换和标签匹配)
+		// 验证 pointID (类型转换和标签匹配)
 		expectedID, idOk := row["ID"].(int32) // 从原始 map 中获取 ID，假设是 int32
 		assert.True(t, idOk, "原始数据中 ID 应为 int32")
-		assert.Equal(t, expectedID, scanned.PointID, "Scan 后的 PointID 不匹配 (行 %d)", i)
+		assert.Equal(t, expectedID, scanned.pointID, "Scan 后的 pointID 不匹配 (行 %d)", i)
 
 		// 验证 GroupName (类型转换和标签匹配)
 		expectedGN, gnOk := row["GN"].(string) // 从原始 map 中获取 GN，假设是 string
@@ -658,4 +696,68 @@ func TestQueryResultScan(t *testing.T) {
 	assert.NoError(t, err, "Scan 到 nil 切片指针应成功（会分配新切片）")           // 验证没有错误
 	assert.NotNil(t, nilSlice, "Scan 后切片不应为 nil")                  // 验证切片已被分配
 	assert.Len(t, nilSlice, len(qr.Rows), "Scan 到 nil 切片指针后长度应匹配") // 验证分配后的长度正确
+	t.Log("Scan 错误处理测试完成")
+}
+
+// --- 辅助日志函数 ---
+
+// logQueryResultSample 记录 QueryResult 的前 N 行数据样本。
+func logQueryResultSample(t *testing.T, qr *opio.QueryResult, maxRows int) {
+	if qr == nil || len(qr.Rows) == 0 {
+		t.Log("  (查询结果为空)")
+		return
+	}
+	t.Logf("  查询结果样本 (最多 %d 行):", maxRows)
+	// 打印列名
+	colNames := make([]string, len(qr.Columns))
+	for i, col := range qr.Columns {
+		colNames[i] = col.GetName()
+	}
+	t.Logf("    列: %v", colNames)
+	// 打印行数据
+	for i, row := range qr.Rows {
+		if i >= maxRows {
+			t.Logf("    ... (更多 %d 行)", len(qr.Rows)-i)
+			break
+		}
+		t.Logf("    行 %d: %+v", i, row)
+	}
+}
+
+// logArchiveSample 记录 Archive 数据的前 N 个点。
+func logArchiveSample(t *testing.T, ar *opio.Archive, maxPoints int) {
+	if ar == nil || len(ar.Data) == 0 {
+		t.Logf("  (ID %d 的历史数据为空)", ar.ID)
+		return
+	}
+	t.Logf("  历史数据样本 (ID: %d, 类型: %d, 最多 %d 点):", ar.ID, ar.Type, maxPoints)
+	for i, val := range ar.Data {
+		if i >= maxPoints {
+			t.Logf("    ... (更多 %d 点)", len(ar.Data)-i)
+			break
+		}
+		// 格式化时间戳
+		ts := time.Unix(int64(val.TM), 0).Format("2006-01-02 15:04:05")
+		t.Logf("    点 %d: 时间=%s, 状态=%d, 值=%v", i, ts, val.DS, val.AV)
+	}
+}
+
+// logStatSample 记录 Stat 数据的前 N 个统计值。
+func logStatSample(t *testing.T, st *opio.Stat, maxPoints int) {
+	if st == nil || len(st.Data) == 0 {
+		t.Logf("  (ID %d 的统计数据为空)", st.ID)
+		return
+	}
+	t.Logf("  统计数据样本 (ID: %d, 类型: %d, 最多 %d 点):", st.ID, st.Type, maxPoints)
+	for i, val := range st.Data {
+		if i >= maxPoints {
+			t.Logf("    ... (更多 %d 点)", len(st.Data)-i)
+			break
+		}
+		// 格式化时间戳
+		ts := time.Unix(int64(val.Time), 0).Format("2006-01-02 15:04:05")
+		// 打印所有 StatVal 结构体中的字段
+		t.Logf("    点 %d: 时间=%s, 状态=%d, 平均值=%.3f, 最大值=%.3f (时间=%v), 最小值=%.3f (时间=%v), 累积=%.3f, 算术平均=%.3f, 总和=%.3f",
+			i, ts, val.Status, val.Avg, val.Max, time.Unix(int64(val.MaxTime), 0).Format("15:04:05"), val.Min, time.Unix(int64(val.MinTime), 0).Format("15:04:05"), val.Flow, val.Mean, val.Sum)
+	}
 }

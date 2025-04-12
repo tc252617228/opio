@@ -55,19 +55,22 @@ func (r *UnPackOPRow) GetValue(col uint32) (value interface{}, err error) {
 		if err != nil {
 			return nil, err
 		}
-		value = DecodeSlice(raw)
+		// Handle error from DecodeSlice, ignore for getter simplicity
+		value, _ = DecodeSlice(raw)
 	case VtMap:
 		raw, err := r.GetBytes(col)
 		if err != nil {
 			return nil, err
 		}
-		value = DecodeMap(raw)
+		// Handle error from DecodeMap, ignore for getter simplicity
+		value, _ = DecodeMap(raw)
 	case VtStructure:
 		raw, err := r.GetBytes(col)
 		if err != nil {
 			return nil, err
 		}
-		value = DecodeStructure(raw)
+		// Handle error from DecodeStructure, ignore for getter simplicity
+		value, _ = DecodeStructure(raw)
 	}
 	return value, err
 }
@@ -106,19 +109,22 @@ func (r *UnPackOPRow) GetValueExt(col uint32) (value interface{}, isObj bool, er
 		if err != nil {
 			return nil, false, err
 		}
-		value = DecodeSlice(raw)
+		// Handle error from DecodeSlice, ignore for getter simplicity
+		value, _ = DecodeSlice(raw)
 	case VtMap:
 		raw, err := r.GetBytes(col)
 		if err != nil {
 			return nil, false, err
 		}
-		value = DecodeMap(raw)
+		// Handle error from DecodeMap, ignore for getter simplicity
+		value, _ = DecodeMap(raw)
 	case VtStructure:
 		raw, err := r.GetBytes(col)
 		if err != nil {
 			return nil, false, err
 		}
-		value = DecodeStructure(raw)
+		// Handle error from DecodeStructure, ignore for getter simplicity
+		value, _ = DecodeStructure(raw)
 	}
 	return value, isObj, err
 }
@@ -302,7 +308,8 @@ func (r *UnPackOPRow) GetBool(col uint32) (bool, error) {
 		case VtSlice:
 			v, err := r.GetBytes(col)
 			if nil == err {
-				o := DecodeSlice(v)
+				// Handle error from DecodeSlice, ignore for getter simplicity
+				o, _ := DecodeSlice(v)
 				return o != nil && !o.IsEmpty(), err
 			} else {
 				return false, err
@@ -310,7 +317,8 @@ func (r *UnPackOPRow) GetBool(col uint32) (bool, error) {
 		case VtMap:
 			v, err := r.GetBytes(col)
 			if nil == err {
-				o := DecodeMap(v)
+				// Handle error from DecodeMap, ignore for getter simplicity
+				o, _ := DecodeMap(v)
 				return o != nil && !o.IsEmpty(), err
 			} else {
 				return false, err
@@ -318,7 +326,8 @@ func (r *UnPackOPRow) GetBool(col uint32) (bool, error) {
 		case VtStructure:
 			v, err := r.GetBytes(col)
 			if nil == err {
-				o := DecodeStructure(v)
+				// Handle error from DecodeStructure, ignore for getter simplicity
+				o, _ := DecodeStructure(v)
 				return o != nil && !o.IsEmpty(), err
 			} else {
 				return false, err
@@ -912,7 +921,8 @@ func (r *UnPackOPRow) GetString(col uint32) (string, error) {
 		case VtSlice:
 			v, err := r.GetBytes(col)
 			if nil == err {
-				o := DecodeSlice(v)
+				// Handle error from DecodeSlice, ignore for getter simplicity
+				o, _ := DecodeSlice(v)
 				if o != nil {
 					return o.String(false), nil
 				} else {
@@ -924,7 +934,8 @@ func (r *UnPackOPRow) GetString(col uint32) (string, error) {
 		case VtMap:
 			v, err := r.GetBytes(col)
 			if nil == err {
-				o := DecodeMap(v)
+				// Handle error from DecodeMap, ignore for getter simplicity
+				o, _ := DecodeMap(v)
 				if o != nil {
 					return o.String(false), nil
 				} else {
@@ -936,7 +947,8 @@ func (r *UnPackOPRow) GetString(col uint32) (string, error) {
 		case VtStructure:
 			v, err := r.GetBytes(col)
 			if nil == err {
-				o := DecodeStructure(v)
+				// Handle error from DecodeStructure, ignore for getter simplicity
+				o, _ := DecodeStructure(v)
 				if o != nil {
 					return o.String(false), nil
 				} else {

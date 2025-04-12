@@ -22,7 +22,10 @@ func TestFixedSlice(t *testing.T) {
 	}
 	encodeES := time.Now()
 
-	headLen, raw := EncodeSlice(testSlice)
+	headLen, raw, err := EncodeSlice(testSlice) // 添加 err
+	if err != nil {
+		t.Fatalf("TestFixedSlice: EncodeSlice failed: %v", err)
+	}
 
 	fmt.Println("slice encode elapsed:", time.Since(encodeES))
 	fmt.Println("slice head len:", headLen)
@@ -31,10 +34,13 @@ func TestFixedSlice(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opSlice := DecodeSlice(raw)
+	opSlice, err := DecodeSlice(raw) // 添加 err
+	if err != nil {
+		t.Fatalf("TestFixedSlice: DecodeSlice failed: %v", err)
+	}
 	if nil == opSlice {
-		fmt.Println("decode slice failed")
-		return
+		// DecodeSlice 返回 nil, nil 表示空二进制输入，这里不应发生
+		t.Fatalf("TestFixedSlice: DecodeSlice returned nil slice for non-empty input")
 	}
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 
@@ -50,7 +56,10 @@ func TestVarSlice(t *testing.T) {
 
 	encodeES := time.Now()
 
-	headLen, raw := EncodeSlice(testSlice)
+	headLen, raw, err := EncodeSlice(testSlice) // 添加 err
+	if err != nil {
+		t.Fatalf("TestVarSlice: EncodeSlice failed: %v", err)
+	}
 
 	fmt.Println("slice encode elapsed:", time.Since(encodeES))
 	fmt.Println("slice head len:", headLen)
@@ -59,10 +68,12 @@ func TestVarSlice(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opSlice := DecodeSlice(raw)
+	opSlice, err := DecodeSlice(raw) // 添加 err
+	if err != nil {
+		t.Fatalf("TestVarSlice: DecodeSlice failed: %v", err)
+	}
 	if nil == opSlice {
-		fmt.Println("decode slice failed")
-		return
+		t.Fatalf("TestVarSlice: DecodeSlice returned nil slice for non-empty input")
 	}
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 
@@ -80,7 +91,10 @@ func TestArraySlice(t *testing.T) {
 
 	encodeES := time.Now()
 
-	headLen, raw := EncodeSlice(testSlice)
+	headLen, raw, err := EncodeSlice(testSlice) // 添加 err
+	if err != nil {
+		t.Fatalf("TestArraySlice: EncodeSlice failed: %v", err)
+	}
 
 	fmt.Println("slice encode elapsed:", time.Since(encodeES))
 
@@ -90,10 +104,12 @@ func TestArraySlice(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opSlice := DecodeSlice(raw)
+	opSlice, err := DecodeSlice(raw) // 添加 err
+	if err != nil {
+		t.Fatalf("TestArraySlice: DecodeSlice failed: %v", err)
+	}
 	if nil == opSlice {
-		fmt.Println("decode slice failed")
-		return
+		t.Fatalf("TestArraySlice: DecodeSlice returned nil slice for non-empty input")
 	}
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 
@@ -117,7 +133,10 @@ func TestMapSlice(t *testing.T) {
 	}
 	encodeES := time.Now()
 
-	headLen, raw := EncodeSlice(testSlice)
+	headLen, raw, err := EncodeSlice(testSlice) // 添加 err
+	if err != nil {
+		t.Fatalf("TestMapSlice: EncodeSlice failed: %v", err)
+	}
 
 	fmt.Println("slice encode elapsed:", time.Since(encodeES))
 
@@ -127,10 +146,12 @@ func TestMapSlice(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opSlice := DecodeSlice(raw)
+	opSlice, err := DecodeSlice(raw) // 添加 err
+	if err != nil {
+		t.Fatalf("TestMapSlice: DecodeSlice failed: %v", err)
+	}
 	if nil == opSlice {
-		fmt.Println("decode slice failed")
-		return
+		t.Fatalf("TestMapSlice: DecodeSlice returned nil slice for non-empty input")
 	}
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 
@@ -153,7 +174,10 @@ func TestStructureSlice(t *testing.T) {
 
 	encodeES := time.Now()
 
-	headLen, raw := EncodeSlice(testSlice)
+	headLen, raw, err := EncodeSlice(testSlice) // 添加 err
+	if err != nil {
+		t.Fatalf("TestStructureSlice: EncodeSlice failed: %v", err)
+	}
 
 	fmt.Println("slice encode elapsed:", time.Since(encodeES))
 
@@ -163,10 +187,12 @@ func TestStructureSlice(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opSlice := DecodeSlice(raw)
+	opSlice, err := DecodeSlice(raw) // 添加 err
+	if err != nil {
+		t.Fatalf("TestStructureSlice: DecodeSlice failed: %v", err)
+	}
 	if nil == opSlice {
-		fmt.Println("decode slice failed")
-		return
+		t.Fatalf("TestStructureSlice: DecodeSlice returned nil slice for non-empty input")
 	}
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 
@@ -186,7 +212,10 @@ func TestEmptySlice(t *testing.T) {
 
 	encodeES := time.Now()
 
-	headLen, raw := EncodeSlice(testSlice)
+	headLen, raw, err := EncodeSlice(testSlice) // 添加 err
+	if err != nil {
+		t.Fatalf("TestEmptySlice: EncodeSlice failed: %v", err)
+	}
 
 	fmt.Println("slice encode elapsed:", time.Since(encodeES))
 
@@ -196,11 +225,17 @@ func TestEmptySlice(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opSlice := DecodeSlice(raw)
-	if nil == opSlice {
-		fmt.Println("decode slice failed")
-		return
+	opSlice, err := DecodeSlice(raw) // 添加 err
+	if err != nil {
+		// 对于空 slice 输入，DecodeSlice 应该返回 nil, nil
+		// 如果返回错误，说明解码逻辑有问题
+		t.Fatalf("TestEmptySlice: DecodeSlice failed for empty slice input: %v", err)
 	}
+	// 对于空 slice 输入，DecodeSlice 应该返回 opSlice == nil
+	// if nil == opSlice { // 这行是错误的，空 slice 解码后 opSlice 不为 nil，但 IsEmpty() 为 true
+	// 	fmt.Println("decode slice failed") // 移除旧的打印
+	// 	return
+	// }
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 
 	if opSlice.IsEmpty() {
@@ -217,7 +252,10 @@ func TestFixedSliceAt(t *testing.T) {
 	testSlice := []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	encodeES := time.Now()
 
-	headLen, raw := EncodeSlice(testSlice)
+	headLen, raw, err := EncodeSlice(testSlice) // 添加 err
+	if err != nil {
+		t.Fatalf("TestFixedSliceAt: EncodeSlice failed: %v", err)
+	}
 
 	fmt.Println("slice encode elapsed:", time.Since(encodeES))
 	fmt.Println("slice head len:", headLen)
@@ -226,10 +264,12 @@ func TestFixedSliceAt(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opSlice := DecodeSlice(raw)
+	opSlice, err := DecodeSlice(raw) // 添加 err
+	if err != nil {
+		t.Fatalf("TestFixedSliceAt: DecodeSlice failed: %v", err)
+	}
 	if nil == opSlice {
-		fmt.Println("decode slice failed")
-		return
+		t.Fatalf("TestFixedSliceAt: DecodeSlice returned nil slice for non-empty input")
 	}
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 
@@ -307,7 +347,10 @@ func TestVarSliceAt(t *testing.T) {
 	testSlice := []string{"a", "b", "c", "d", "e", "f", "g"}
 	encodeES := time.Now()
 
-	headLen, raw := EncodeSlice(testSlice)
+	headLen, raw, err := EncodeSlice(testSlice) // 添加 err
+	if err != nil {
+		t.Fatalf("TestVarSliceAt: EncodeSlice failed: %v", err)
+	}
 
 	fmt.Println("slice encode elapsed:", time.Since(encodeES))
 	fmt.Println("slice head len:", headLen)
@@ -316,10 +359,12 @@ func TestVarSliceAt(t *testing.T) {
 
 	decodeES := time.Now()
 
-	opSlice := DecodeSlice(raw)
+	opSlice, err := DecodeSlice(raw) // 添加 err
+	if err != nil {
+		t.Fatalf("TestVarSliceAt: DecodeSlice failed: %v", err)
+	}
 	if nil == opSlice {
-		fmt.Println("decode slice failed")
-		return
+		t.Fatalf("TestVarSliceAt: DecodeSlice returned nil slice for non-empty input")
 	}
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 

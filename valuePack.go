@@ -64,7 +64,7 @@ func (op *IOConnect) WriteArchiveValue(v []Value, cache bool) (err error) {
 		err = io.Flush(true)
 	}
 	if err != nil {
-		fmt.Println(err)
+		// 移除多余的打印，直接返回错误
 		return err
 	}
 	var echo int8
