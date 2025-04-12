@@ -50,18 +50,18 @@ func (fs *Filters) write(io *utils.Buffer) error {
 	return nil
 }
 
-// Filter -
+// Filter 定义了查询、更新或删除操作的过滤条件。
 type Filter struct {
-	left  string
-	oper  uint8
-	right string
-
-	relation uint8
+	Left     string // 左操作数（通常是列名）
+	Operator uint8  // 操作符 (见 opio.Oper* 常量)
+	Right    string // 右操作数（值）
+	Relation uint8  // 与下一个过滤条件的关系 (见 opio.Relation* 常量)
 }
 
+// NewFilter 创建一个新的 Filter 实例。
 // noinspection ALL
-func NewFilter(left string, oper byte, right string, relation byte) *Filter {
-	return &Filter{left, oper, right, relation}
+func NewFilter(left string, oper uint8, right string, relation uint8) *Filter {
+	return &Filter{Left: left, Operator: oper, Right: right, Relation: relation}
 }
 
 // read -
@@ -83,7 +83,7 @@ func (f *Filter) read(io *utils.Buffer) (err error) {
 		return errors.New("key error")
 	}
 
-	f.left, err = io.DecodeString()
+	f.Left, err = io.DecodeString()
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (f *Filter) read(io *utils.Buffer) (err error) {
 		return errors.New("key error")
 	}
 
-	f.oper, err = io.DecodeUint8()
+	f.Operator, err = io.DecodeUint8()
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (f *Filter) read(io *utils.Buffer) (err error) {
 		return errors.New("key error")
 	}
 
-	f.right, err = io.DecodeString()
+	f.Right, err = io.DecodeString()
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func (f *Filter) read(io *utils.Buffer) (err error) {
 	} else if relation != "Or" {
 		return errors.New("key error")
 	}
-	f.relation, err = io.DecodeUint8()
+	f.Relation, err = io.DecodeUint8()
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func (f *Filter) write(io *utils.Buffer) (err error) {
 	if err != nil {
 		return err
 	}
-	err = io.EncodeString(f.left)
+	err = io.EncodeString(f.Left)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (f *Filter) write(io *utils.Buffer) (err error) {
 	if err != nil {
 		return err
 	}
-	err = io.EncodeUint8(f.oper)
+	err = io.EncodeUint8(f.Operator)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func (f *Filter) write(io *utils.Buffer) (err error) {
 	if err != nil {
 		return err
 	}
-	err = io.EncodeString(f.right)
+	err = io.EncodeString(f.Right)
 	if err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func (f *Filter) write(io *utils.Buffer) (err error) {
 	if err != nil {
 		return err
 	}
-	err = io.EncodeUint8(f.relation)
+	err = io.EncodeUint8(f.Relation)
 	if err != nil {
 		return err
 	}
