@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert" // 确保 assert 被导入
 )
 
 type teacher struct {
@@ -238,14 +240,13 @@ func TestEmptySlice(t *testing.T) {
 	// }
 	fmt.Println("slice decode elapsed:", time.Since(decodeES))
 
-	if opSlice.IsEmpty() {
-		fmt.Println("slice was empty")
-	} else {
-		iter := opSlice.Iterator()
-		for iter.SeekToFirst(); iter.Valid(); iter.Next() {
-			fmt.Println("slice element value:", opSlice.Get())
-		}
+	// 对于空 slice 的二进制表示，DecodeSlice 应返回 nil
+	// 使用 testify/assert 来检查 opSlice 是否为 nil
+	assert.Nil(t, opSlice, "DecodeSlice for an empty slice should return nil")
+	if opSlice == nil {
+		fmt.Println("opSlice is correctly nil for an empty slice representation")
 	}
+	// 移除多余的括号
 }
 
 func TestFixedSliceAt(t *testing.T) {

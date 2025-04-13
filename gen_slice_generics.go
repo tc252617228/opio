@@ -7,7 +7,7 @@ package opio
 import (
 	"time"
 
-	"github.com/tc252617228/opio/internal/utils"
+	"opio/internal/utils"
 )
 
 func EncodeSliceBool(value []bool) (int, []byte) {

@@ -6,7 +6,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/tc252617228/opio/internal/utils"
+	"opio/internal/utils"
 )
 
 type student struct {
@@ -304,22 +304,34 @@ func TestEmptyStructure(t *testing.T) {
 	fmt.Println("class:", class)
 
 	scores := opStructure.GetSlice("Scores")
-	if scores.IsEmpty() {
-		fmt.Println("Scores is empty")
+	// Check if scores is nil before calling methods on it
+	if scores == nil {
+		fmt.Println("Scores is nil (expected for empty struct)")
 	} else {
-		iter := scores.Iterator()
-		for iter.SeekToFirst(); iter.Valid(); iter.Next() {
-			fmt.Println("score:", scores.Get())
+		// If not nil, then check if it's logically empty
+		if scores.IsEmpty() {
+			fmt.Println("Scores is empty")
+		} else {
+			iter := scores.Iterator()
+			for iter.SeekToFirst(); iter.Valid(); iter.Next() {
+				fmt.Println("score:", scores.Get())
+			}
 		}
 	}
 
 	family := opStructure.GetMap("Family")
-	if family.IsEmpty() {
-		fmt.Println("family is empty")
+	// Check if family is nil before calling methods on it
+	if family == nil {
+		fmt.Println("family is nil (expected for empty struct)")
 	} else {
-		family.Range(func(key, value interface{}) bool {
-			fmt.Println("family key:", key, "value:", value)
-			return true
-		})
+		// If not nil, then check if it's logically empty
+		if family.IsEmpty() {
+			fmt.Println("family is empty")
+		} else {
+			family.Range(func(key, value interface{}) bool {
+				fmt.Println("family key:", key, "value:", value)
+				return true
+			})
+		}
 	}
 }

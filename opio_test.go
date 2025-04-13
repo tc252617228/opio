@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var host = "10.75.39.143"
+var host = "10.75.39.200"
 var port = 8200
 var user = "sis"
 var pwd = "openplant"
@@ -54,8 +54,8 @@ func Test_sub(t *testing.T) {
 	//for i := int32(0); i < 17; i++ {
 	//	ids[i] = 1024 + i
 	//}
-	ids := []int32{1024}
-	ids2 := []int32{1025}
+	ids := []int32{198713}
+	ids2 := []int32{198714}
 	//ids2 := make([]int32, 1)
 	//ids2[0] = 9031
 	log.Println("开始发起订阅")

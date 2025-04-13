@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/tc252617228/opio/internal/utils"
+	"opio/internal/utils"
 )
 
 // Request -
