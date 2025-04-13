@@ -1,40 +1,43 @@
-# opio 包 - GormClient 使用指南 (中文)
+# opio 包 - Go 语言 OpenPlant 客户端库
 
-`opio` 包提供了一个 `GormClient` 类型，旨在简化与 GORM 支持的数据库（如 MySQL）以及 OpenPlant Opio 服务的交互。它结合了 GORM 的 ORM 功能和 Opio 的实时数据订阅、V3 API 数据读写能力。
+`opio` 包提供了一个 Go 语言客户端库，用于与 OpenPlant 实时/历史数据库服务器进行交互。它支持多种 API 风格，包括通用的 V2 数据操作、直接的 V3 数据访问以及 SQL 执行和实时数据订阅。
 
 ## 1. 安装
 
 ```bash
+# 假设你的项目使用了 Go Modules
+# 注意：请将路径替换为实际的 opio 包路径或仓库地址
 go get d:/synchronous/BaiduSyncdisk/code/opio
-# 或者在你的 go.mod 文件中引用本地路径 (如果适用)
-# replace opio => d:/synchronous/BaiduSyncdisk/code/opio
 ```
+
 然后在你的 Go 代码中导入：
+
 ```go
 import "opio"
 ```
 
-## 2. 连接与关闭
+## 2. 客户端初始化与管理
 
-使用 `opio.Connect` 函数同时建立 GORM 数据库连接和用于订阅/V3 API 的 Opio 连接。
+### 连接服务器
+
+使用 `opio.Connect` 函数建立与 OpenPlant 服务器的连接。你需要提供服务器地址、端口、用户名、密码以及连接超时时间。建议使用 `context.Context` 来控制连接和后续操作的生命周期。
 
 ```go
 package main
 
 import (
 	"context"
-	"errors" // 引入 errors 包用于错误检查
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
-	"opio" // 导入本地模块
+	"opio" // 导入 opio 包
 )
 
 func main() {
 	// --- 配置参数 (请替换为你的实际环境配置) ---
-	gormDSN := "sis:openplant@tcp(10.75.39.143:3306)/opio?charset=utf8mb4&parseTime=True&loc=Local" // GORM DSN
-	opioHost := "10.75.39.143"   // OpenPlant 服务器主机名或 IP
+	opioHost := "10.75.39.200"   // OpenPlant 服务器主机名或 IP
 	opioPort := 8200           // OpenPlant 服务器端口
 	opioUser := "sis"            // 用户名
 	opioPass := "openplant"      // 密码
@@ -46,139 +49,316 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel() // 确保在 main 函数退出时取消 context
 
-	client, err := opio.Connect(ctx, gormDSN, opioHost, opioPort, opioUser, opioPass, connectTimeout)
+	client, err := opio.Connect(ctx, opioHost, opioPort, opioUser, opioPass, connectTimeout)
 	if err != nil {
 		log.Fatalf("连接失败: %v", err)
 	}
 	log.Println("连接成功!")
 
 	// --- 使用 Client ---
-	// ... 在这里执行数据库查询、订阅、V3 API 操作等 ...
-	// 例如，查询一个点位
-	var point opio.GormPoint
-	err = client.FindByID(ctx, &point, 1024) // 假设查询 ID 为 1024 的点
+	// ... 在这里执行 V2, V3, SQL 或订阅操作 ...
+	// 示例：使用 V2 FindByID 查询点位信息
+	var point opio.PointRecord // 使用 v4_models.go 中定义的结构体 (注意：实际应使用 gorm_models.go 或自定义结构)
+	err = client.FindByID(ctx, &point, opio.TablePoint, "ID", 624819) // 查询 ID 为 624819 的点
 	if err != nil {
 		if errors.Is(err, opio.ErrRecordNotFound) {
-			log.Println("未找到点位 1024")
+			log.Println("未找到记录")
 		} else {
-			log.Printf("查询点位失败: %v", err)
+			log.Printf("V2 FindByID 失败: %v", err)
 		}
 	} else {
-		log.Printf("查询到点位: ID=%d, 名称=%s", point.ID, point.PN)
+		log.Printf("V2 FindByID 成功: %+v", point)
 	}
 
 
 	// --- 关闭 ---
-	// 通常不需要显式调用 Close，当上面的 ctx 超时或被 cancel 时，连接会自动关闭。
-	// 如果需要提前关闭，可以调用 cancel() 或显式调用 client.Close()
-	// err = client.Close()
-	// if err != nil && !errors.Is(err, opio.ErrConnectionClosed) {
-	//     log.Printf("关闭客户端时出错: %v", err)
-	// }
+	// 显式关闭连接（通常在程序结束时）
+	err = client.Close()
+	if err != nil && !errors.Is(err, opio.ErrConnectionClosed) {
+		log.Printf("关闭客户端时出错: %v", err)
+	} else {
+		log.Println("客户端连接已关闭")
+	}
 
-	log.Println("操作完成或超时，等待 context 取消...")
-	<-ctx.Done() // 等待 context 完成
-	log.Println("Context 完成，客户端应已关闭")
-	// 可能需要短暂等待后台任务（如关闭连接）完成
-	time.Sleep(1 * time.Second)
+	// 如果使用了带超时的 context，等待其完成也是一种管理方式
+	// <-ctx.Done()
+	// log.Println("Context 完成")
 }
 ```
 
-**关键点:**
+### 配置
 
-*   `opio.Connect` 需要 GORM DSN 和 Opio 连接参数。
-*   使用 `context.Context` 管理连接生命周期和操作超时/取消。
-*   `client.Close()` 用于显式关闭，但通常由 context 管理。
+*   `client.SetDefaultTimeout(duration time.Duration)`: 设置客户端后续操作的默认超时时间。如果操作的 `context` 没有设置截止时间，则会使用此默认值。
+*   `client.SetLogger(logger *log.Logger)`: 设置一个 `log.Logger` 实例，用于客户端内部的日志记录（例如，连接错误、订阅回调中的错误等）。
 
-## 3. GORM 数据库操作
+## 3. V2 API (通用数据操作)
 
-`GormClient` 封装了常见的 GORM 操作。
+V2 API 提供了一套通用的、基于表名和过滤器的 CRUD（创建、读取、更新、删除）接口。这些方法位于 `client.go` 中。
 
 ### 创建记录 (`client.Create`)
 
+插入一条或多条记录到指定的表中。数据以 `[]map[string]interface{}` 的形式提供。
+
 ```go
-newPoint := &opio.GormPoint{
-	PN: "MyNewPoint",
-	ED: "A test point created via GormClient",
-	RT: 1, // 示例类型
-	// ... 设置其他必要字段 ...
+dataToInsert := []map[string]interface{}{
+	{"PN": "V2_TestPoint1", "ED": "描述1", "RT": 1, "EU": "kg"},
+	{"PN": "V2_TestPoint2", "ED": "描述2", "RT": 1, "EU": "m"},
 }
-err := client.Create(ctx, newPoint)
-// ... 错误处理 ...
+// 假设 ctx 是已初始化的 context.Context
+// 假设 client 是已连接的 *opio.OpioClient
+err := client.Create(ctx, opio.TablePoint, dataToInsert)
+if err != nil {
+	log.Printf("V2 Create 失败: %v", err)
+} else {
+	log.Println("V2 Create 成功")
+}
 ```
 
 ### 按 ID 查询 (`client.FindByID`)
 
+根据主键 ID 查询单条记录，并将结果扫描到提供的结构体指针 `dest` 中。`dest` 结构体的字段应使用 `opio:"列名"` 标签来映射数据库列。
+
 ```go
-var point opio.GormPoint
-err := client.FindByID(ctx, &point, 1024)
-// ... 错误处理 (包括 opio.ErrRecordNotFound) ...
+// 假设 PointRecord 结构体已定义 (可参考 gorm_models.go 或自定义)
+type PointRecord struct {
+    ID int32     `opio:"ID"`
+    PN string    `opio:"PN"`
+    ED string    `opio:"ED"`
+    // ... 其他字段 ...
+}
+
+var point PointRecord
+err := client.FindByID(ctx, &point, opio.TablePoint, "ID", 624819) // 查询 ID 为 624819 的点
+if err != nil {
+	if errors.Is(err, opio.ErrRecordNotFound) {
+		log.Println("未找到记录")
+	} else {
+		log.Printf("V2 FindByID 失败: %v", err)
+	}
+} else {
+	log.Printf("V2 FindByID 成功: %+v", point)
+}
 ```
 
 ### 条件查询 (`client.Query`)
 
+根据过滤条件、排序和分页选项查询多条记录，并将结果扫描到提供的结构体切片指针 `dest` 中。
+
 ```go
-var points []opio.GormPoint
-err := client.Query(ctx, &points, "RT = ? AND PN LIKE ?", 1, "My%")
-// ... 错误处理 ...
+// 假设 PointRecord 结构体已定义
+var points []*PointRecord // 查询结果切片
+opts := &opio.QueryOptions{
+	Filters: []opio.Filter{
+		*opio.NewFilter("RT", opio.OperEQ, "1", opio.RelationAnd), // 查询 RT=1 的点
+		*opio.NewFilter("PN", opio.OperLike, "V2%", opio.RelationAnd), // 且 PN 以 "V2" 开头
+	},
+	OrderBy: "ID DESC", // 按 ID 降序
+	Limit:   "10",      // 最多返回 10 条
+}
+// 查询所有列 (columns 传 nil)
+err := client.Query(ctx, &points, opio.TablePoint, nil, opts)
+if err != nil {
+	log.Printf("V2 Query 失败: %v", err)
+} else {
+	log.Printf("V2 Query 成功，找到 %d 条记录:", len(points))
+	for _, p := range points {
+		log.Printf("  %+v", *p)
+	}
+}
 ```
+**`Filter` 结构:**
+*   `Left`: 列名
+*   `Operator`: 操作符 (如 `opio.OperEQ`, `opio.OperGT`, `opio.OperLike` 等，定义在 `const.go`)
+*   `Right`: 要比较的值 (字符串形式)
+*   `Relation`: 与下一个过滤条件的关系 (`opio.RelationAnd` 或 `opio.RelationOr`)
 
 ### 更新记录 (`client.Update`)
 
-默认更新所有字段（需要模型包含主键）。
+根据过滤器更新匹配的记录。`updates` 参数是一个 `map[string]interface{}`，指定要更新的列和新值。**必须提供过滤器 `filters` 以确保安全。**
 
 ```go
-var pointToUpdate opio.GormPoint
-err := client.FindByID(ctx, &pointToUpdate, 1024)
-if err == nil {
-	pointToUpdate.ED = "Updated description"
-	err = client.Update(ctx, &pointToUpdate)
-	// ... 错误处理 ...
+updates := map[string]interface{}{
+	"ED": "新的描述 (V2 Update)",
+	"EU": "UpdatedUnit",
+}
+filters := []opio.Filter{
+	*opio.NewFilter("PN", opio.OperEQ, "V2_TestPoint1", opio.RelationAnd),
+}
+err := client.Update(ctx, opio.TablePoint, updates, filters)
+if err != nil {
+	log.Printf("V2 Update 失败: %v", err)
+} else {
+	log.Println("V2 Update 成功")
 }
 ```
 
 ### 删除记录 (`client.Delete`)
 
+根据过滤器删除匹配的记录。**必须提供过滤器 `filters` 以确保安全。**
+
 ```go
-err := client.Delete(ctx, &opio.GormPoint{}, 1025)
-// ... 错误处理 (包括 opio.ErrRecordNotFound) ...
+filters := []opio.Filter{
+	*opio.NewFilter("PN", opio.OperLike, "V2_TestPoint%", opio.RelationAnd),
+}
+err := client.Delete(ctx, opio.TablePoint, filters)
+if err != nil {
+	log.Printf("V2 Delete 失败: %v", err)
+} else {
+	log.Println("V2 Delete 成功")
+}
 ```
 
-## 4. 原始 SQL 执行
+## 4. V3 API (直接数据访问)
+
+V3 API 提供针对特定数据类型（实时、历史、统计）的直接读写接口，可能具有更好的性能。这些方法位于 `client.go` 中。
+
+### 读写实时数据 (`client.ReadRealtime`, `client.WriteRealtime`)
+
+使用 `opio.Value` 结构体进行交互。
+
+```go
+// --- 写入 ---
+writeTime := time.Now()
+valuesToWrite := []opio.Value{
+	{ID: 624819, TM: int32(writeTime.Unix()), DS: 0, AV: 123.45},
+	// {ID: otherID, ...},
+}
+err = client.WriteRealtime(ctx, valuesToWrite)
+if err != nil {
+    log.Printf("V3 WriteRealtime 失败: %v", err)
+}
+
+// --- 读取 ---
+idsToRead := []int32{624819}
+valuesToRead := make([]opio.Value, len(idsToRead))
+for i, id := range idsToRead {
+	valuesToRead[i] = opio.Value{ID: id} // 读取时只需提供 ID
+}
+err = client.ReadRealtime(ctx, valuesToRead) // 读取结果会填充到 valuesToRead 中
+if err != nil {
+    log.Printf("V3 ReadRealtime 失败: %v", err)
+} else {
+	for _, v := range valuesToRead {
+		log.Printf("读取到实时数据: ID=%d, Time=%d, Status=%d, Value=%f", v.ID, v.TM, v.DS, v.AV)
+	}
+}
+```
+
+### 读写历史数据 (`client.ReadArchive`, `client.WriteArchive`)
+
+使用 `opio.Archive` 结构体（包含 `[]opio.Value`）进行交互。
+
+```go
+// --- 写入 ---
+writeTime := time.Now()
+archivesToWrite := []*opio.Archive{
+	{ID: 624819, Type: opio.TypeR8, Data: []opio.Value{ // TypeR8 表示 float64
+		{TM: int32(writeTime.Add(-2 * time.Minute).Unix()), DS: 0, AV: 100.1},
+		{TM: int32(writeTime.Add(-1 * time.Minute).Unix()), DS: 0, AV: 100.2},
+	}},
+}
+err = client.WriteArchive(ctx, archivesToWrite, false) // cache=false
+if err != nil {
+    log.Printf("V3 WriteArchive 失败: %v", err)
+}
+
+// --- 读取 ---
+readIDs := []int32{624819}
+beginTime := time.Now().Add(-5 * time.Minute)
+endTime := time.Now()
+// 读取原始值 (ModeRaw)，不指定间隔 (0)
+readArchives, err := client.ReadArchive(ctx, readIDs, opio.ModeRaw, beginTime, endTime, 0)
+if err != nil {
+    log.Printf("V3 ReadArchive 失败: %v", err)
+} else {
+	for _, ar := range readArchives {
+		log.Printf("读取到历史数据: ID=%d, Type=%d, 点数=%d", ar.ID, ar.Type, len(ar.Data))
+		for _, v := range ar.Data {
+			log.Printf("  -> Time=%d, Status=%d, Value=%f", v.TM, v.DS, v.AV)
+		}
+	}
+}
+```
+
+### 读取统计数据 (`client.ReadStat`)
+
+使用 `opio.Stat` 结构体（包含 `[]opio.StatVal`）接收结果。
+
+```go
+readIDs := []int32{624819}
+beginTime := time.Now().Add(-10 * time.Minute)
+endTime := time.Now()
+interval := int32(60) // 1 分钟间隔
+
+// 读取平均值 (ModeAvg)
+stats, err := client.ReadStat(ctx, readIDs, opio.ModeAvg, beginTime, endTime, interval)
+if err != nil {
+    log.Printf("V3 ReadStat 失败: %v", err)
+} else {
+	for _, st := range stats {
+		log.Printf("读取到统计数据: ID=%d, Type=%d, 点数=%d", st.ID, st.Type, len(st.Data))
+		for _, sv := range st.Data { // sv 是 opio.StatVal 类型
+			log.Printf("  -> Time=%d, Status=%d, Avg=%f", sv.Time, sv.Status, sv.Avg)
+		}
+	}
+}
+```
+**注意**: `ReadArchive` 和 `ReadStat` 的 `mode` 参数决定了查询的数据类型（原始值、平均值、最大值等），具体常量定义在 `api_v3.go` 中 (如 `opio.ModeRaw`, `opio.ModeAvg`)。
+
+## 5. SQL 执行
+
+可以直接执行 SQL 语句，方法位于 `client_sql.go` 中。**强烈建议优先使用 V2 或 V3 API**，因为 SQL 执行方法**不支持参数化查询**，存在 SQL 注入风险。
 
 ### 执行非查询 SQL (`client.ExecSQL`)
 
+用于执行 `INSERT`, `UPDATE`, `DELETE` 等不返回结果集的 SQL。
+
 ```go
-sql := "UPDATE point SET ED = ? WHERE ID = ?"
-rowsAffected, err := client.ExecSQL(ctx, sql, "New Description via SQL", 1024)
-// ... 错误处理 ...
+// 示例：更新描述 (不推荐，优先使用 V2 Update)
+sql := fmt.Sprintf("UPDATE point SET ED = 'New Desc via SQL' WHERE ID = %d", 624819)
+_, err := client.ExecSQL(ctx, sql) // 注意：没有 args 参数
+if err != nil {
+    log.Printf("ExecSQL 失败: %v", err)
+}
 ```
 
 ### 执行查询 SQL (`client.QuerySQL`)
 
+用于执行 `SELECT` 语句，并将结果扫描到 `dest`（必须是结构体切片的指针）。
+
 ```go
-type SimplePoint struct { ID int32; PN string }
-var results []SimplePoint
-sql := "SELECT ID, PN FROM point WHERE RT = ? LIMIT ?"
-err := client.QuerySQL(ctx, &results, sql, 1, 5)
-// ... 错误处理 ...
+type SimplePoint struct {
+	ID int32  `opio:"ID"`
+	PN string `opio:"PN"`
+}
+var results []*SimplePoint
+sql := fmt.Sprintf("SELECT ID, PN FROM point WHERE ID = %d", 624819)
+err := client.QuerySQL(ctx, &results, sql) // 注意：没有 args 参数
+if err != nil {
+    log.Printf("QuerySQL 失败: %v", err)
+} else {
+    // 处理 results
+	for _, p := range results {
+		log.Printf("QuerySQL Result: %+v", *p)
+	}
+}
 ```
 
-## 5. 实时数据订阅 (`client.Subscribe`)
+## 6. 实时数据订阅 (`client.Subscribe`)
 
-订阅 Opio 表（通常是 `Realtime`）的数据变化。
+订阅指定表中符合条件的数据变更。方法位于 `client.go` 中。
 
 ```go
 import "encoding/json" // 需要导入 json 包
 
 // ...
 
-tableName := "Realtime"
-keyColumn := "ID"
-initialKeys := []int32{1024, 1025} // 初始订阅的点位 ID
+tableName := opio.TableRealtime // 通常订阅实时表
+keyColumn := "ID"             // 通常按 ID 订阅
+initialKeys := []int32{624819} // 初始订阅的点位 ID
 
 subOpts := &opio.SubscribeOptions{
-	Snapshot: true, // 获取初始快照
+	Snapshot: true, // 获取初始快照数据
 }
 
 // 创建订阅 (使用独立的 context 管理订阅生命周期)
@@ -186,24 +366,31 @@ subCtx, subCancel := context.WithCancel(context.Background())
 defer subCancel() // 确保订阅最终被取消
 
 subscription, err := client.Subscribe(subCtx, tableName, keyColumn, initialKeys, subOpts)
-// ... 错误处理 ...
+if err != nil {
+    log.Fatalf("创建订阅失败: %v", err)
+}
 log.Println("订阅已创建")
 
-// 定义用于接收扫描结果的结构体 (字段名或标签应与 Realtime 表列名对应)
+// 定义用于接收扫描结果的结构体
 type RealtimeData struct {
-	ID int32     `opio:"ID"`
-	GN string    `opio:"GN"`
-	TM time.Time `opio:"TM"`
-	DS int16     `opio:"DS"`
-	AV float64   // 假设 AV 列可以转换为 float64
+	ID        int32       `opio:"ID"`
+	Timestamp time.Time   `opio:"TM"` // 注意：Scan 会尝试将 int32 时间戳转为 time.Time
+	Value     float64     `opio:"AV"` // 假设 AV 是 float64
+	Status    int16       `opio:"DS"`
+	GN        string      `opio:"GN"`
 }
 
 // 启动 goroutine 处理事件
 go func() {
 	eventChan := subscription.Events()
-	for event := range eventChan {
+	for event := range eventChan { // 通道关闭时循环会自动结束
 		if event.Err != nil {
 			log.Printf("订阅错误: %v", event.Err)
+			// 根据错误类型决定是否需要重新订阅或退出
+			if errors.Is(event.Err, opio.ErrConnectionClosed) || errors.Is(event.Err, opio.ErrSubscriptionClosed){
+				log.Println("订阅连接关闭，退出处理 goroutine")
+				return // 连接或订阅关闭，退出 goroutine
+			}
 			continue
 		}
 
@@ -221,115 +408,78 @@ go func() {
 		scanErr := event.Scan(&rtData) // 使用 Scan 方法
 		if scanErr == nil {
 			log.Printf("扫描到的结构体数据: %+v", rtData)
-		}
+			// 在这里处理具体的数据变更逻辑
+		} else {
+            log.Printf("扫描数据失败: %v, 原始数据: %v", scanErr, event.Data)
+        }
 	}
 	log.Println("订阅处理 goroutine 退出")
 }()
 
-// ... 模拟运行、动态添加/移除 key、取消订阅等 ...
+// --- 模拟运行和管理订阅 ---
+log.Println("等待订阅事件...")
+time.Sleep(30 * time.Second) // 模拟接收事件
+
+// // 动态添加订阅点位 (示例)
+// err = subscription.AddKeys([]int32{1026, 1027})
+// if err != nil && !errors.Is(err, opio.ErrSubscriptionClosed) { log.Printf("添加订阅键失败: %v", err) }
+
+// // 动态移除订阅点位 (示例)
+// err = subscription.RemoveKeys([]int32{624819})
+// if err != nil && !errors.Is(err, opio.ErrSubscriptionClosed) { log.Printf("移除订阅键失败: %v", err) }
+
+// // 显式关闭订阅 (或者通过取消 subCtx)
+// log.Println("正在关闭订阅...")
+// err = subscription.Close()
+// if err != nil && !errors.Is(err, opio.ErrSubscriptionClosed) {
+//     log.Printf("关闭订阅时出错: %v", err)
+// }
+
+// 取消 context 也会导致订阅关闭和 goroutine 退出
+subCancel()
+log.Println("订阅 context 已取消")
+// 等待 goroutine 退出
+time.Sleep(1 * time.Second)
+
 ```
 
 **关键点:**
 
 *   `client.Subscribe` 创建订阅会话。
-*   `subscription.Events()` 返回事件通道 `<-chan SubscriptionEvent`。
+*   `subscription.Events()` 返回一个只读通道 `<-chan SubscriptionEvent`，用于接收事件。
 *   `SubscriptionEvent` 包含 `Data map[string]interface{}` 或 `Err error`。
-*   **新增**: `event.Scan(dest interface{})` 可将数据映射到结构体。
-*   `event.Data` 可用 `encoding/json.Marshal` 转为 JSON。
-*   需要 goroutine 处理事件。通过取消 context 关闭订阅。
-*   `AddKeys`/`RemoveKeys` 可动态修改订阅。
+*   使用 `event.Scan(dest interface{})` 可以方便地将 `event.Data` 映射到你的 Go 结构体 (`dest` 必须是指针)。
+*   需要在一个单独的 goroutine 中处理事件通道，以避免阻塞主线程。
+*   通过取消传递给 `Subscribe` 的 `context` 或调用 `subscription.Close()` 来关闭订阅。
+*   可以使用 `subscription.AddKeys()` 和 `subscription.RemoveKeys()` 动态修改订阅的键列表。
 
-## 6. V3 API 操作 (直接读写实时/历史/统计)
+## 7. 错误处理
 
-`GormClient` 也封装了 V3 风格的 API，用于直接操作数据。
+在调用 `opio` 包的方法时，务必检查返回的 `error`。一些常见的预定义错误包括：
 
-### 读写实时数据 (`client.ReadRealtime`, `client.WriteRealtime`)
+*   `opio.ErrConnectionClosed`: 客户端连接已关闭。
+*   `opio.ErrTimeout`: 操作超时（通常由传递的 `context` 控制）。
+*   `opio.ErrOpioServer`: 底层 Opio 服务器返回了一个错误。可以通过 `errors.As` 获取更详细的 `*opio.OpioServerError`。
+*   `opio.ErrRecordNotFound`: V2 API 的 `FindByID` 未找到记录时返回（其他查询方法在未找到时通常返回空切片和 `nil` 错误）。
+*   `opio.ErrUpdateRequiresFilters`: V2 `Update` 操作缺少必要的过滤条件。
+*   `opio.ErrSubscriptionClosed`: 尝试在已关闭的订阅上执行操作。
 
-```go
-// --- 写入 ---
-writeTime := time.Now()
-valuesToWrite := []opio.Value{
-	{ID: 1024, TM: int32(writeTime.Unix()), DS: 0, AV: 11.1},
-	{ID: 1025, TM: int32(writeTime.Unix()), DS: 0, AV: 22.2},
-}
-err = client.WriteRealtime(ctx, valuesToWrite)
-// ... 错误处理 ...
-
-// --- 读取 ---
-valuesToRead := []opio.Value{{ID: 1024}, {ID: 1025}} // 只需提供 ID
-err = client.ReadRealtime(ctx, valuesToRead)
-if err == nil {
-	for _, v := range valuesToRead {
-		log.Printf("读取到实时数据: %+v", v)
-	}
-}
-// ... 错误处理 ...
-```
-
-### 读写历史数据 (`client.ReadArchive`, `client.WriteArchive`)
+建议使用 `errors.Is()` 或 `errors.As()` 来检查特定的错误类型。
 
 ```go
-// --- 写入 ---
-writeTime := time.Now()
-archivesToWrite := []*opio.Archive{
-	{ID: 1024, Type: opio.TypeR8, Data: []opio.Value{
-		{TM: int32(writeTime.Add(-2 * time.Minute).Unix()), DS: 0, AV: 10.0},
-		{TM: int32(writeTime.Add(-1 * time.Minute).Unix()), DS: 0, AV: 10.5},
-	}},
+// 假设 point 变量已定义
+err := client.FindByID(ctx, &point, opio.TablePoint, "ID", 99999)
+if err != nil {
+    if errors.Is(err, opio.ErrRecordNotFound) {
+        log.Println("记录未找到")
+    } else if errors.Is(err, opio.ErrConnectionClosed) {
+        log.Println("连接已关闭")
+    } else {
+        var serverErr *opio.OpioServerError
+        if errors.As(err, &serverErr) {
+            log.Printf("服务器错误: Code=%d, Message=%s", serverErr.Code, serverErr.Message)
+        } else {
+            log.Printf("发生未知错误: %v", err)
+        }
+    }
 }
-err = client.WriteArchive(ctx, archivesToWrite, false) // false: 不使用缓存
-// ... 错误处理 ...
-
-// --- 读取 ---
-pointIDs := []int32{1024}
-beginTime := time.Now().Add(-5 * time.Minute)
-endTime := time.Now()
-readArchives, err := client.ReadArchive(ctx, pointIDs, opio.ModeRaw, beginTime, endTime, 0) // 读取原始值
-if err == nil {
-	for _, ar := range readArchives {
-		log.Printf("读取到历史数据: ID=%d, 点数=%d", ar.ID, len(ar.Data))
-		// ... 处理 ar.Data ...
-	}
-}
-// ... 错误处理 ...
-```
-
-### 读取统计数据 (`client.ReadStat`)
-
-```go
-pointIDs := []int32{1024}
-beginTime := time.Now().Add(-10 * time.Minute)
-endTime := time.Now()
-interval := int32(60) // 1 分钟间隔
-
-stats, err := client.ReadStat(ctx, pointIDs, opio.ModeAvg, beginTime, endTime, interval) // 读取平均值
-if err == nil {
-	for _, st := range stats {
-		log.Printf("读取到统计数据: ID=%d, 点数=%d", st.ID, len(st.Data))
-		// ... 处理 st.Data (包含 Avg, Max, Min 等字段) ...
-	}
-}
-// ... 错误处理 ...
-```
-
-**关键点:**
-
-*   V3 API 使用特定的结构体 (`Value`, `Archive`, `Stat`)。
-*   `ReadArchive` 和 `ReadStat` 需要指定查询模式 (`mode`)、时间范围和可能的间隔 (`interval`)。模式常量定义在 `api_v3.go` 中。
-
-## 7. 配置与日志
-
-*   `client.SetDefaultTimeout(duration)`: 设置 GORM 操作的默认超时。
-*   `client.SetLogger(logger)`: 设置日志记录器。
-*   `client.SetGormLogLevel(level)`: 设置 GORM 的日志级别 (例如 `gormlogger.Info`, `gormlogger.Warn`)。
-
-## 8. 错误处理
-
-检查方法返回的 `error`。常见的特定错误包括：
-
-*   `opio.ErrConnectionClosed`: 连接已关闭。
-*   `opio.ErrRecordNotFound`: GORM 查询未找到记录。
-*   `opio.ErrTimeout`: 操作超时（通常由 context 控制）。
-*   `opio.ErrOpioServer` / `*opio.OpioServerError`: 订阅或 V3 API 操作时服务器返回错误。
-
-使用 `errors.Is()` 来检查特定错误类型。
