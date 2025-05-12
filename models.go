@@ -15,16 +15,16 @@ import (
 // ====================================================================================
 
 var (
-	ErrConnectionClosed  = errors.New("opio: client connection is closed")
-	ErrTimeout           = errors.New("opio: operation timed out")
-	ErrOpioServer        = errors.New("opio: opio server returned an error")
-	ErrRecordNotFound    = errors.New("opio: record not found") // Redefined
-	ErrUnsupportedIDType = errors.New("opio: unsupported ID type")
+	ErrConnectionClosed  = errors.New("github.com/tc252617228/opio: client connection is closed")
+	ErrTimeout           = errors.New("github.com/tc252617228/opio: operation timed out")
+	ErrOpioServer        = errors.New("github.com/tc252617228/opio: opio server returned an error")
+	ErrRecordNotFound    = errors.New("github.com/tc252617228/opio: record not found") // Redefined
+	ErrUnsupportedIDType = errors.New("github.com/tc252617228/opio: unsupported ID type")
 	// ErrScanTargetInvalid = errors.New("opio: Scan target must be a non-nil pointer to a slice")
 	// ErrScanElementInvalid = errors.New("opio: Scan target slice element must be a struct")
-	ErrUpdateRequiresFilters = errors.New("opio: update operation requires filters")
+	ErrUpdateRequiresFilters = errors.New("github.com/tc252617228/opio: update operation requires filters")
 	// ErrNoFieldsToUpdate = errors.New("opio: no fields found to update")
-	ErrSubscriptionClosed = errors.New("opio: subscription is closed")
+	ErrSubscriptionClosed = errors.New("github.com/tc252617228/opio: subscription is closed")
 )
 
 type OpioServerError struct {
@@ -33,7 +33,7 @@ type OpioServerError struct {
 }
 
 func (e *OpioServerError) Error() string {
-	return fmt.Sprintf("opio: server error %d: %s", e.Code, e.Message)
+	return fmt.Sprintf("github.com/tc252617228/opio: server error %d: %s", e.Code, e.Message)
 }
 
 func (e *OpioServerError) Unwrap() error {
@@ -182,7 +182,7 @@ func (s *Subscription) AddKeys(keys interface{}) error {
 		return ErrSubscriptionClosed
 	default:
 		if s.sub == nil {
-			return errors.New("opio: 底层订阅对象无效")
+			return errors.New("github.com/tc252617228/opio: 底层订阅对象无效")
 		}
 		return s.sub.Subscribe(keys)
 	}
@@ -194,7 +194,7 @@ func (s *Subscription) RemoveKeys(keys interface{}) error {
 		return ErrSubscriptionClosed
 	default:
 		if s.sub == nil {
-			return errors.New("opio: 底层订阅对象无效")
+			return errors.New("github.com/tc252617228/opio: 底层订阅对象无效")
 		}
 		return s.sub.UnSubscribe(keys)
 	}

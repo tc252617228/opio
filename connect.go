@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"opio/internal/utils"
+	"github.com/tc252617228/opio/internal/utils"
 )
 
 // IOConnect -

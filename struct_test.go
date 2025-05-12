@@ -6,7 +6,7 @@ import (
 	"time"
 	"unsafe"
 
-	"opio/internal/utils"
+	"github.com/tc252617228/opio/internal/utils"
 )
 
 type student struct {

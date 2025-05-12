@@ -7,7 +7,7 @@ import (
 
 	// time 包不再需要，移除
 
-	"opio/internal/utils"
+	"github.com/tc252617228/opio/internal/utils"
 )
 
 const (

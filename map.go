@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strconv"
 
-	"opio/internal/utils"
+	"github.com/tc252617228/opio/internal/utils"
 )
 
 const (

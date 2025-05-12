@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"opio" // 导入你的 opio 包
+	"github.com/tc252617228/opio"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
