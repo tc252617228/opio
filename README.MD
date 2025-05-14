@@ -364,280 +364,240 @@ recordIDToDelete := int32(2) // 要删除的记录 ID
 *   `id` 是要删除的记录的 ID 值。
 *   内部会构建一个 `OperEQ` 的过滤器并调用 `client.Delete`。
 
-## 6. 数据修改 (V2 风格 - 原始方法)
+## 6. 常见用法示例（基于底层API，适合高级用户）
 
-### 插入数据 (`client.Insert`)
-
+### 6.1 基础连接与UUID生成
 ```go
-tableName := "test_insert_table" // 假设此表存在 (例如: col_int INT, col_str VARCHAR, col_float FLOAT)
-insertData := []map[string]interface{}{
-	{"col_int": 101, "col_str": "client_test1", "col_float": 101.1},
-	{"col_int": 102, "col_str": "client_test2", "col_float": 102.2, "extra_col": "会被忽略"}, // extra_col 会被忽略，因为表结构中没有
+// 初始化连接
+op, err := opio.Init("170.170.10.5", 8200, 60, "sis", "openplant")
+if err != nil {
+    log.Fatal("连接失败:", err)
 }
+defer op.Close()
 
-// 执行插入 (需要先创建表)
-// err = client.Insert(ctx, tableName, insertData)
-// if err != nil {
-//  log.Fatalf("插入数据失败: %v", err)
-// }
-// log.Println("数据插入成功")
+// 生成唯一标识符
+uuid := opio.MakeUUID("W3.test.test")
+fmt.Println("UUID:", uuid)
 ```
 
-**关键点:**
-
-*   `data` 是一个 `[]map[string]interface{}`，每个 map 代表一行。
-*   `Insert` 方法会尝试从第一行数据推断列名和类型。确保数据结构基本一致。
-*   如果 map 中的键在目标表中不存在，该列会被忽略。
-
-### 更新数据 (`client.Update`)
-
+### 6.2 基础SQL查询与复杂SQL
 ```go
-tableName := "test_insert_table"
-updates := map[string]interface{}{
-	"col_str":   "updated_value",
-	"col_float": 999.9,
-}
-filters := []opio.Filter{
-	*opio.NewFilter("col_int", opio.OperEQ, "101", opio.RelationAnd), // 更新 col_int = 101 的行
-}
+// 基础SQL查询
+op, _ := opio.Init(host, port, 60, user, pwd)
+defer op.Close()
+_ = op.SetCompressModel(opio.ZIP_MODEL_Frame)
+sql := "select * from Realtime limit 10"
+req := op.NewRequest(nil)
+req.SetID(1)
+req.SetService("openplant")
+req.SetAction(opio.ActionExecSQL)
+req.SetSQL(sql)
+_ = req.WriteAndFlush()
+res, _ := req.GetResponse()
+rs := res.GetDataSet()
+// 处理数据集 rs ...
+rs.Close()
 
-// 执行更新 (需要表存在且有匹配数据)
-// err = client.Update(ctx, tableName, updates, filters)
-// if err != nil {
-//  log.Fatalf("更新数据失败: %v", err)
-// }
-// log.Println("数据更新成功")
+// 复杂SQL查询
+sql2 := "SELECT GN FROM NODE WHERE GN='HNJT.NET';"
+req2 := op.NewRequest(nil)
+req2.SetID(2)
+req2.SetService("openplant")
+req2.SetAction(opio.ActionExecSQL)
+req2.SetSQL(sql2)
+_ = req2.WriteAndFlush()
+res2, _ := req2.GetResponse()
+rs2 := res2.GetDataSet()
+// 处理数据集 rs2 ...
+rs2.Close()
 ```
 
-**关键点:**
-
-*   `updates` map 定义了要更新的列和新值。
-*   `filters` 定义了更新的条件。如果 `filters` 为空，可能会更新所有行 (危险！)。
-
-### 删除数据 (`client.Delete`)
-
+### 6.3 实时数据插入（按点名/ID/多类型）
 ```go
-tableName := "test_insert_table"
-filters := []opio.Filter{
-	*opio.NewFilter("col_str", opio.OperLike, "'%test%'", opio.RelationAnd), // 删除 col_str 包含 'test' 的行
+// 按点名批量插入多类型实时数据
+op, _ := opio.Init(host, port, 60, user, pwd)
+defer op.Close()
+req := op.NewRequest(nil)
+req.SetID(1)
+req.SetService("openplant")
+req.SetAction(opio.ActionInsert)
+table := opio.NewTable("Realtime", 0)
+table.AddColumn("GN", opio.VtString, 0)
+table.AddColumn("AV", opio.VtObject, 0)
+for i := 0; i < 100; i++ {
+    gn := fmt.Sprintf("W3.AX.AX%d", i)
+    _ = table.SetColumnString(0, gn)
+    _ = table.SetColumnObject(1, float64(i))
+    table.BindRow()
 }
+_ = req.SetTable(table)
+_ = req.Write()
+_ = req.WriteContent(table)
+req.Flush()
+res, _ := req.GetResponse()
+rs := res.GetDataSet()
+rs.Close()
 
-// 执行删除 (需要表存在且有匹配数据)
-// err = client.Delete(ctx, tableName, filters)
-// if err != nil {
-//  log.Fatalf("删除数据失败: %v", err)
-// }
-// log.Println("数据删除成功")
+// 按ID插入实时数据（支持多类型）
+// 先查ID和类型，再写入
+req2 := op.NewRequest(nil)
+req2.SetID(2)
+req2.SetService("openplant")
+req2.SetAction(opio.ActionExecSQL)
+req2.SetSQL("select ID,RT from Point where RT IN (0,1,2,3,4,5)")
+_ = req2.Write()
+req2.Flush()
+res2, _ := req2.GetResponse()
+rs2 := res2.GetDataSet()
+idRt := make(map[int32]int8)
+for {
+    ok, _ := rs2.Next()
+    if !ok { break }
+    id, _ := rs2.GetInt32(0)
+    rt, _ := rs2.GetInt8(1)
+    idRt[id] = rt
+}
+rs2.Close()
+req3 := op.NewRequest(nil)
+req3.SetID(3)
+req3.SetService("openplant")
+req3.SetAction(opio.ActionInsert)
+table2 := opio.NewTable("Realtime", 0)
+table2.AddColumn("ID", opio.VtInt32, 0)
+table2.AddColumn("AV", opio.VtObject, 0)
+for id, rt := range idRt {
+    _ = table2.SetColumnInt32(0, id, 0)
+    switch rt {
+    case 0, 4:
+        _ = table2.SetColumnObject(1, float64(123))
+    case 2, 3, 5:
+        _ = table2.SetColumnObject(1, 123)
+    case 6, 7:
+        _ = table2.SetColumnObject(1, "字符串")
+    default:
+        _ = table2.SetColumnObject(1, true)
+    }
+    table2.BindRow()
+}
+_ = req3.SetTable(table2)
+_ = req3.Write()
+_ = req3.WriteContent(table2)
+req3.Flush()
+res3, _ := req3.GetResponse()
+rs3 := res3.GetDataSet()
+rs3.Close()
 ```
 
-**关键点:**
-
-*   `filters` 定义了删除的条件。
-*   **警告:** 如果 `filters` 为空，可能会删除表中的所有数据，请务必谨慎！(建议在应用层添加检查)。
-
-## 7. 实时数据订阅 (`client.Subscribe`)
-
-订阅允许实时接收特定数据的变化。
-
+### 6.4 实时数据订阅
 ```go
-tableName := "Realtime" // 通常订阅实时表
-keyColumn := "ID"       // 使用点位 ID 作为订阅键
-initialKeys := []int32{1024, 1025} // 初始订阅的点位 ID 列表 (类型需匹配 keyColumn)
-
-subOpts := &opio.SubscribeOptions{
-	Snapshot: true, // 订阅时获取一次当前值的快照
-}
-
-// 创建订阅
-subscription, err := client.Subscribe(ctx, tableName, keyColumn, initialKeys, subOpts)
-if err != nil {
-	log.Fatalf("创建订阅失败: %v", err)
-}
-log.Println("订阅已创建")
-
-// 启动一个 goroutine 来处理订阅事件
-go func() {
-	eventChan := subscription.Events() // 获取事件通道
-	for event := range eventChan {     // 循环读取事件，通道关闭时循环结束
-		if event.Err != nil {
-			log.Printf("订阅错误: %v", event.Err)
-			// 可以根据错误类型决定是否需要重新订阅或关闭
-			// if errors.Is(event.Err, some_disconnect_error) {
-			//  subscription.Close() // 关闭当前订阅
-			//  break
-			// }
-		} else {
-			log.Printf("收到订阅数据: %v", event.Data)
-			// 处理 event.Data (map[string]interface{})
-		}
-	}
-	log.Println("订阅事件处理 goroutine 结束")
-}()
-
-// 订阅期间可以动态添加或移除 Key
-time.Sleep(5 * time.Second) // 等待接收一些数据
-additionalKeys := []int32{1026}
-err = subscription.AddKeys(additionalKeys)
-if err != nil {
-	log.Printf("动态添加 Key 失败: %v", err)
-} else {
-	log.Printf("已添加 Key: %v", additionalKeys)
-}
-
-time.Sleep(5 * time.Second)
-err = subscription.RemoveKeys(additionalKeys)
-if err != nil {
-	log.Printf("动态移除 Key 失败: %v", err)
-} else {
-	log.Printf("已移除 Key: %v", additionalKeys)
-}
-
-// 等待一段时间或直到程序退出
-// time.Sleep(20 * time.Second)
-
-// 关闭订阅 (通常由创建订阅时传入的 context 控制，或显式调用)
-// log.Println("准备关闭订阅...")
-// err = subscription.Close()
-// if err != nil {
-//  log.Printf("关闭订阅时出错: %v", err)
-// }
-// log.Println("订阅已关闭")
-
-// 等待 context 超时或取消，这将自动关闭订阅
-<-ctx.Done()
-log.Println("Context 完成，订阅将自动关闭")
-// 短暂等待 goroutine 退出
-time.Sleep(1 * time.Second)
-
+// 实时数据订阅
+op, _ := opio.Init(host, port, 60, user, pwd)
+sub, _ := op.NewSubscribe("Realtime")
+ids := []int32{1024, 1025}
+_ = sub.InitSubscribe(ids, "ID", func(res *opio.Response) {
+    if res.GetErrNo() == 0 {
+        ds := res.GetDataSet()
+        // 处理数据集 ds ...
+    } else {
+        fmt.Println("订阅错误:", res.GetErrNo())
+    }
+})
+// 追加订阅
+_ = sub.Subscribe([]int32{1026})
+// 取消订阅
+_ = sub.UnSubscribe([]int32{1025})
+// 关闭订阅
+sub.Close()
 ```
 
-**关键点:**
-
-*   `client.Subscribe` 创建一个订阅会话。`keys` 参数必须是 `[]int32`, `[]int64`, 或 `[]string`。
-*   返回的 `*Subscription` 对象用于管理订阅。
-*   `subscription.Events()` 返回一个只读通道 (`<-chan SubscriptionEvent`)，用于接收数据或错误。
-*   `SubscriptionEvent` 包含数据 (`Data map[string]interface{}`) 或错误 (`Err error`)。
-*   需要启动一个 goroutine 来循环处理来自 `Events()` 通道的数据。
-*   `subscription.Close()` 用于显式关闭订阅。当创建订阅时传入的 `context` 被取消时，订阅也会自动关闭，并关闭事件通道。
-*   `subscription.AddKeys()` 和 `subscription.RemoveKeys()` 可以动态修改订阅的键列表。
-
-## 8. V3 API 操作
-
-`Client` 还封装了 V3 风格的 API，用于直接读写实时值、历史值和统计值。这些方法通常使用特定的结构体 (`opio.Value`, `opio.Archive`, `opio.Stat`)。
-
-### 读写实时数据
-
+### 6.5 批量写入与性能测试
 ```go
-pointIDs := []int32{1024, 1025}
-
-// --- 写入 ---
-writeTime := time.Now()
-valuesToWrite := make([]opio.Value, len(pointIDs))
-for i, id := range pointIDs {
-	valuesToWrite[i] = opio.Value{
-		ID: id,
-		TM: int32(writeTime.Unix()),
-		DS: 0,                   // 状态
-		AV: float64(i+1) * 11.1, // 值
-	}
+// 批量写入实时数据并统计耗时
+start := time.Now()
+for i := 0; i < 100; i++ {
+    // ... 构造table并写入 ...
 }
-err = client.WriteRealtime(ctx, valuesToWrite)
-if err != nil {
-	log.Fatalf("写入实时数据失败: %v", err)
-}
-log.Println("实时数据写入成功")
-
-time.Sleep(200 * time.Millisecond) // 短暂等待
-
-// --- 读取 ---
-valuesToRead := make([]opio.Value, len(pointIDs))
-for i, id := range pointIDs {
-	valuesToRead[i] = opio.Value{ID: id} // 读取时只需提供 ID
-}
-err = client.ReadRealtime(ctx, valuesToRead)
-if err != nil {
-	log.Fatalf("读取实时数据失败: %v", err)
-}
-
-// 处理读取结果 (填充在 valuesToRead 中)
-for _, v := range valuesToRead {
-	log.Printf("读取到实时数据: ID=%d, TM=%d, DS=%d, AV=%v", v.ID, v.TM, v.DS, v.AV)
-}
+fmt.Println("批量写入耗时:", time.Since(start))
 ```
 
-### 读写历史数据
-
+### 6.6 数据查找、过滤、更新、删除
 ```go
-pointIDs := []int32{1024, 1025}
+// 查找
+op, _ := opio.Init(host, port, 60, user, pwd)
+req := op.NewRequest(nil)
+req.SetID(1)
+req.SetService("openplant")
+req.SetAction(opio.ActionFind)
+req.SetTableName("Realtime")
+_ = req.WriteAndFlush()
+res, _ := req.GetResponse()
+rs := res.GetDataSet()
+// 处理数据集 rs ...
+rs.Close()
 
-// --- 写入 ---
-writeTime := time.Now()
-archivesToWrite := make([]*opio.Archive, len(pointIDs))
-for i, id := range pointIDs {
-	archivesToWrite[i] = &opio.Archive{
-		ID:   id,
-		Type: opio.TypeR8, // 假设是浮点数类型
-		Data: []opio.Value{
-			{TM: int32(writeTime.Add(-2 * time.Minute).Unix()), DS: 0, AV: float64(i+1) * 10.0},
-			{TM: int32(writeTime.Add(-1 * time.Minute).Unix()), DS: 0, AV: float64(i+1) * 10.5},
-		},
-	}
-}
-err = client.WriteArchive(ctx, archivesToWrite, false) // false: 不使用缓存
-if err != nil {
-	log.Fatalf("写入历史数据失败: %v", err)
-}
-log.Println("历史数据写入成功")
+// 过滤查找
+req2 := op.NewRequest(nil)
+req2.SetID(2)
+req2.SetService("openplant")
+req2.SetAction(opio.ActionFind)
+req2.SetTableName("Realtime")
+req2.Set("Filters", []map[string]interface{}{{"Field": "GN", "Oper": opio.OperLike, "Value": "W3.AX.%"}})
+_ = req2.WriteAndFlush()
+res2, _ := req2.GetResponse()
+rs2 := res2.GetDataSet()
+// 处理数据集 rs2 ...
+rs2.Close()
 
-time.Sleep(200 * time.Millisecond)
+// 更新
+req3 := op.NewRequest(nil)
+req3.SetID(3)
+req3.SetService("openplant")
+req3.SetAction(opio.ActionUpdate)
+req3.SetTableName("Realtime")
+req3.Set("Filters", []map[string]interface{}{{"Field": "GN", "Oper": opio.OperLike, "Value": "W3.AX.%"}})
+req3.Set("Values", map[string]interface{}{ "AV": 999 })
+_ = req3.WriteAndFlush()
+res3, _ := req3.GetResponse()
+// 检查更新结果 ...
 
-// --- 读取 ---
-beginTime := writeTime.Add(-5 * time.Minute)
-endTime := writeTime.Add(1 * time.Minute)
-readArchives, err := client.ReadArchive(ctx, pointIDs, opio.ModeRaw, beginTime, endTime, 0) // 读取原始值
-if err != nil {
-	log.Fatalf("读取历史数据失败: %v", err)
-}
-
-// 处理读取结果
-for _, ar := range readArchives {
-	log.Printf("读取到历史数据: ID=%d, Type=%d, 点数=%d", ar.ID, ar.Type, len(ar.Data))
-	for j, v := range ar.Data {
-		log.Printf("  点 %d: TM=%d, DS=%d, AV=%v", j, v.TM, v.DS, v.AV)
-	}
-}
+// 删除
+req4 := op.NewRequest(nil)
+req4.SetID(4)
+req4.SetService("openplant")
+req4.SetAction(opio.ActionRemove)
+req4.SetTableName("Realtime")
+req4.Set("Filters", []map[string]interface{}{{"Field": "GN", "Oper": opio.OperLike, "Value": "W3.AX.%"}})
+_ = req4.WriteAndFlush()
+res4, _ := req4.GetResponse()
+// 检查删除结果 ...
 ```
 
-### 读取统计数据
-
+### 6.7 多线程查找
 ```go
-pointIDs := []int32{1024, 1025}
-beginTime := time.Now().Add(-10 * time.Minute)
-endTime := time.Now()
-interval := int32(60) // 1 分钟间隔
-
-// 读取平均值
-stats, err := client.ReadStat(ctx, pointIDs, opio.ModeAvg, beginTime, endTime, interval)
-if err != nil {
-	log.Fatalf("读取统计数据失败: %v", err)
+// 多线程并发查找
+var wg sync.WaitGroup
+for i := 0; i < 10; i++ {
+    wg.Add(1)
+    go func(idx int) {
+        defer wg.Done()
+        op, _ := opio.Init(host, port, 60, user, pwd)
+        req := op.NewRequest(nil)
+        req.SetID(int64(idx))
+        req.SetService("openplant")
+        req.SetAction(opio.ActionFind)
+        req.SetTableName("Realtime")
+        _ = req.WriteAndFlush()
+        res, _ := req.GetResponse()
+        rs := res.GetDataSet()
+        // 处理数据集 rs ...
+        rs.Close()
+        op.Close()
+    }(i)
 }
-
-// 处理读取结果
-for _, st := range stats {
-	log.Printf("读取到统计数据: ID=%d, Type=%d, 点数=%d", st.ID, st.Type, len(st.Data))
-	for j, v := range st.Data {
-		// StatValue 结构包含 Avg, Max, Min, Start, End, Total 等字段
-		log.Printf("  统计值 %d: TM=%d, Avg=%v, Max=%v, Min=%v", j, v.TM, v.Avg, v.Max, v.Min)
-	}
-}
+wg.Wait()
 ```
 
-**关键点:**
-
-*   V3 API 使用特定的结构体 (`Value`, `Archive`, `Stat`) 来传递数据。
-*   `ReadArchive` 和 `ReadStat` 需要指定查询模式 (`mode`) 和时间范围 (`begin`, `end`)，以及可能的间隔 (`interval`)。模式常量定义在 `api_v3.go` 中 (例如 `opio.ModeRaw`, `opio.ModeAvg`, `opio.ModeMax` 等)。
-
-## 9. Context 和错误处理
+## 7. Context 和错误处理
 
 *   所有 `Client` 的方法都接受 `context.Context` 作为第一个参数。这允许你控制操作的超时或取消。
 *   方法在出错时返回标准的 Go `error`。检查返回的 `error` 是否为 `nil` 来判断操作是否成功。可以使用 `errors.Is` 或类型断言来处理特定类型的错误（如果需要）。

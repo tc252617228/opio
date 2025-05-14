@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var host = "10.75.39.143"
+var host = "170.170.10.5"
 var port = 8200
 var user = "sis"
 var pwd = "openplant"
